@@ -1,0 +1,1 @@
+UNIVERSE = ["NVDA", "GOOGL", "MSFT", "AMZN", "META"]
