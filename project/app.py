@@ -88,6 +88,93 @@ if "use_parallel_load" not in st.session_state:
     st.session_state["use_parallel_load"] = True
 
 # ---------------------------------------------------------
+# AUTO-LOAD: Custom Screener Universe (mirrors Performance page pattern)
+# ---------------------------------------------------------
+
+# Hardcoded default universe — loaded automatically on every startup.
+# Drop CustomScreener.csv next to app.py (or in ui/ or data/) to override.
+_DEFAULT_SCREENER_TICKERS = [
+    "NVDA","GOOG","GOOGL","MSFT","AMZN","AVGO","META","LLY","V","JNJ",
+    "ORCL","MA","MU","NFLX","PLTR","PM","CRM","APP","KLAC","ISRG",
+    "APH","AMGN","UBER","ANET","BKNG","SPGI","SCCO","INTU","BSX","SYK",
+    "NEM","HON","NOW","NEMCL","PGR","ADBE","PH","VRTX","ADP","MCO",
+    "HOOD","HWM","MRSH","MMC","WM","BAM","CDNS","TDG","MAR","ORLY",
+    "ABNB","EQIX","CTAS","MNST","RCL","SLB","MRVL","VRT","RSG","HLT",
+    "MSI","SPG","AZO","NDAQ","COIN","IDXX","URI","ADSK","FTNT","ZTS",
+    "PSA","CMG","BKR","FAST","ALL","PYPL","AME","MPWR","OKE","WDAY",
+    "MSCI","ROP","YUM","BSQKZ","FANG","HEI","HEI.A","RDDT","XYZ","FIX",
+    "PAYX","CPRT","WAB","LVS","RMD","FICO","VEEV","CCL","XYL","FISV",
+    "UI","EXR","VICI","ROL","VRSK","VIK","FOXA","FOX","CBOE","FTAI",
+    "DXCM","HUBB","TW","FSLR","BR","CINF","CW","TPL","VRSN","RGLD",
+    "RL","CPAY","INCY","SSNC","BWXT","PTC","UTHR","WWD","TYL","LII",
+    "HL","PINS","ZBH","MEDP","WES","IT","CRS","GEN","TTD","ITT","RBC",
+    "CDE","ULS","EVR","DECK","NXT","PEN","GDDY","JKHY","OHI","ERIE",
+    "GLPI","NBIX","HST","GMED","RMBS","DT","PR","BSY","EXEL","NYT",
+    "SPXC","STRL","FDS","BMRN","MANH","CART","EGP","LNWO","WTS","SOLS",
+    "KNSL","PJT","FRT","AM","MORN","PEGA","HLNE","AWI","CTRE","HALO",
+    "PAYC","CAVA","FR","NNN","PLNT","IDCC","APPF","DOCS","WING","ZWS",
+    "PCTY","CHDN","HESM","MSA","HQY","FSS","BYD","EXLS","DUOL",
+]
+
+_DEFAULT_SCREENER_CSV_PATHS = [
+    "CustomScreener.csv",
+    "ui/CustomScreener.csv",
+    "data/CustomScreener.csv",
+]
+
+def _try_autoload_screener_csv() -> bool:
+    """
+    Silently load CustomScreener.csv from well-known paths on first run.
+    Mirrors _try_autoload_csv() in performance.py.
+    Returns True if a file was successfully loaded.
+    """
+    for path in _DEFAULT_SCREENER_CSV_PATHS:
+        if not os.path.exists(path):
+            continue
+        try:
+            df_csv = pd.read_csv(path)
+            df_csv.columns = [c.lower().strip().lstrip("\ufeff") for c in df_csv.columns]
+            if "ticker" not in df_csv.columns:
+                continue
+            tickers = (
+                df_csv["ticker"]
+                .astype(str)
+                .str.upper()
+                .str.strip()
+                .dropna()
+                .unique()
+                .tolist()
+            )
+            tickers = [t for t in tickers if t and t != "NAN"]
+            if not tickers:
+                continue
+            st.session_state["uploaded_universe"] = tickers
+            st.session_state["_screener_source"] = f"file:{path}"
+            return True
+        except Exception:
+            continue
+    return False
+
+def _init_screener_universe() -> None:
+    """
+    Called once on startup (mirrors _init_state() in performance.py).
+    Priority: (1) already set in session_state, (2) disk CSV, (3) hardcoded default.
+    """
+    if "uploaded_universe" in st.session_state and st.session_state["uploaded_universe"] is not None:
+        return  # Already set — don't overwrite user-uploaded or previously loaded universe
+
+    # Try loading from disk first
+    if _try_autoload_screener_csv():
+        return
+
+    # Fall back to hardcoded default universe
+    st.session_state["uploaded_universe"] = _DEFAULT_SCREENER_TICKERS
+    st.session_state["_screener_source"] = "default"
+
+import os
+_init_screener_universe()
+
+# ---------------------------------------------------------
 # Load full CIK map (cached)
 # ---------------------------------------------------------
 @st.cache_data
@@ -562,10 +649,9 @@ st.sidebar.markdown(
 )
 
 use_parallel = st.session_state.get("use_parallel_load", True)
-if st.session_state["uploaded_universe"] is not None:
-    universe = st.session_state["uploaded_universe"]
-else:
-    universe = UNIVERSE
+# uploaded_universe is always set now (auto-loaded from CSV or hardcoded default).
+# Fall back to the legacy UNIVERSE constant only as a last resort.
+universe = st.session_state.get("uploaded_universe") or UNIVERSE
 
 # Load data
 cache_key = str(sorted(universe))
@@ -713,9 +799,9 @@ if st.session_state["page"] == "data_controls":
                     st.success(f"Screener universe updated: {len(universe)} tickers.")
 
         if st.button("Reset Screener to Default", key="reset_screener_data"):
-            st.session_state["uploaded_universe"] = None
+            st.session_state["uploaded_universe"] = _DEFAULT_SCREENER_TICKERS
             st.session_state["loaded_universe_key"] = None
-            st.success("Screener universe reset to default.")
+            st.success(f"Screener universe reset to default ({len(_DEFAULT_SCREENER_TICKERS)} tickers).")
 
     with col_right:
         st.markdown("### Portfolio Controls")
@@ -770,7 +856,7 @@ elif st.session_state["page"] == "dashboard":
         peg_cols = ["PEG (PE LTM)", "PEG (Lynch)"]
         for col in peg_cols:
             if col in df_adj.columns:
-                df_adj[col] = df_adj[col].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "")
+                df_adj[col] = df_adj[col].apply(lambda x: f"{x:.0%}" if pd.notna(x) else "")
 
         # Format Market Cap
         if "Market Cap (M)" in df_adj.columns:
