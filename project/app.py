@@ -749,54 +749,33 @@ if st.sidebar.button("Performance", width="stretch", type="primary" if current_p
 # DATA CONTROLS PAGE
 # =========================================================
 if st.session_state["page"] == "data_controls":
+
     st.markdown(
-        '''<h1 style="font-size:32px;font-weight:800;color:#ffffff;margin-bottom:4px;">Data</h1>''',
+        '''<h1 style="font-size:32px;font-weight:800;color:#ffffff;margin-bottom:2px;">Data</h1>''',
         unsafe_allow_html=True,
     )
-    st.caption("Upload and manage Screener universe data and Portfolio transactions from one page.")
 
-    # ── Shared card style ──────────────────────────────────────────────────
     st.markdown(
         """
         <style>
-        .data-card {
-            background: #1a1a2e;
-            border: 1px solid #2d2d4e;
-            border-radius: 10px;
-            padding: 20px 24px 16px 24px;
-            margin-bottom: 12px;
-        }
-        .data-card h3 {
-            margin: 0 0 4px 0;
-            font-size: 16px;
-            font-weight: 700;
-            color: #e0e0f0;
-            letter-spacing: 0.03em;
-        }
-        .data-card .subtitle {
-            font-size: 12px;
-            color: #888;
-            margin-bottom: 14px;
-        }
-        .format-badge {
-            display: inline-block;
-            background: #0d3b66;
-            color: #7ec8ff;
-            border-radius: 4px;
+        /* ── section divider label ── */
+        .section-label {
             font-size: 11px;
-            font-weight: 600;
-            padding: 2px 8px;
-            margin-right: 4px;
-            letter-spacing: 0.04em;
+            font-weight: 700;
+            letter-spacing: 0.10em;
+            text-transform: uppercase;
+            color: #555;
+            margin: 0 0 10px 0;
         }
+        /* ── column pills for required/optional ── */
         .req-col {
             display: inline-block;
-            background: #1e3a1e;
+            background: #1a3a1a;
             color: #6dcc6d;
             border-radius: 4px;
             font-size: 11px;
-            font-weight: 600;
-            padding: 2px 7px;
+            font-weight: 700;
+            padding: 2px 8px;
             margin: 2px 3px 2px 0;
             letter-spacing: 0.03em;
         }
@@ -806,49 +785,77 @@ if st.session_state["page"] == "data_controls":
             color: #c8b46d;
             border-radius: 4px;
             font-size: 11px;
-            padding: 2px 7px;
+            padding: 2px 8px;
             margin: 2px 3px 2px 0;
         }
-        .note-text {
+        /* ── action legend table ── */
+        .action-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            margin: 8px 0 6px 0;
+        }
+        .action-table td {
+            padding: 4px 8px 4px 0;
+            vertical-align: top;
+            line-height: 1.4;
+        }
+        .action-key {
+            color: #7ec8ff;
+            font-weight: 700;
+            white-space: nowrap;
+            width: 90px;
+        }
+        .action-desc {
+            color: #888;
+        }
+        .action-desc em {
+            color: #aaa;
+            font-style: normal;
+        }
+        /* ── format hint line ── */
+        .fmt-hint {
             font-size: 11.5px;
-            color: #999;
-            margin-top: 6px;
+            color: #666;
+            margin: 4px 0 10px 0;
             line-height: 1.5;
+        }
+        /* ── divider between sections ── */
+        .col-divider {
+            border: none;
+            border-top: 1px solid #2a2a3a;
+            margin: 14px 0 16px 0;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    col_left, col_right = st.columns([0.5, 0.5])
+    col_left, col_right = st.columns([1, 1], gap="large")
 
-    # ── SCREENER DATA ──────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════
+    # LEFT — SCREENER DATA
+    # ══════════════════════════════════════════════════════
     with col_left:
-        st.markdown("### Screener Data")
 
-        # Format reference card
+        st.markdown('<p class="section-label">Screener Universe</p>', unsafe_allow_html=True)
+
+        # ── column pills ──────────────────────────────────
         st.markdown(
-            """
-            <div class="data-card">
-              <h3>📄 Expected File Format</h3>
-              <div class="subtitle">CSV or Excel (.xlsx) with the following column:</div>
-              <div>
-                <span class="req-col">ticker</span>
-                <span class="opt-col">company (optional)</span>
-              </div>
-              <div class="note-text">
-                • One ticker per row — standard exchange symbols (e.g. AAPL, MSFT, NVDA)<br>
-                • Column header must be exactly <strong style="color:#e0e0f0;">ticker</strong> (case-insensitive)<br>
-                • Additional columns are ignored — only <em>ticker</em> is read<br>
-                • Accepts <strong style="color:#e0e0f0;">.csv</strong> and <strong style="color:#e0e0f0;">.xlsx</strong> formats
-              </div>
+            '''<div style="margin-bottom:6px;">
+              <span class="req-col">ticker</span>
+              <span class="opt-col">company &nbsp;optional</span>
             </div>
-            """,
+            <div class="fmt-hint">
+              One ticker per row &mdash; standard symbols (AAPL, MSFT&hellip;)<br>
+              Accepts <strong style="color:#ccc;">.csv</strong> and <strong style="color:#ccc;">.xlsx</strong>.
+              Only the <strong style="color:#ccc;">ticker</strong> column is read; all others are ignored.
+            </div>''',
             unsafe_allow_html=True,
         )
 
-        # Live preview of the expected format
-        with st.expander("▶ View example layout", expanded=False):
+        # ── example table (open by default) ───────────────
+        with st.expander("Example layout", expanded=True):
             st.dataframe(
                 pd.DataFrame({
                     "ticker":  ["AAPL", "MSFT", "NVDA", "GOOGL", "META"],
@@ -856,13 +863,16 @@ if st.session_state["page"] == "data_controls":
                 }),
                 hide_index=True,
                 use_container_width=True,
-                height=215,
+                height=212,
                 column_config={
                     "ticker":  st.column_config.TextColumn("ticker", width="small"),
                     "company": st.column_config.TextColumn("company (optional)", width="medium"),
                 },
             )
 
+        st.markdown('<hr class="col-divider">', unsafe_allow_html=True)
+
+        # ── controls ──────────────────────────────────────
         st.checkbox(
             "Parallel load",
             value=st.session_state.get("use_parallel_load", True),
@@ -871,114 +881,110 @@ if st.session_state["page"] == "data_controls":
         )
 
         universe_file = st.file_uploader(
-            "Universe file",
+            "Upload universe file",
             type=["csv", "xlsx"],
             key="data_controls_universe_file",
-            help="CSV/XLSX with a 'ticker' column",
+            label_visibility="collapsed",
         )
 
-        # Download sample file
         screener_sample_csv = "ticker,company\nAAPL,Apple Inc.\nMSFT,Microsoft Corp.\nNVDA,NVIDIA Corp.\nGOOGL,Alphabet Inc.\nMETA,Meta Platforms Inc.\n"
-        st.download_button(
-            label="⬇ Download sample screener CSV",
-            data=screener_sample_csv,
-            file_name="screener_universe_example.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
 
-        if st.button("Apply Screener Data", key="apply_screener_data", type="primary"):
-            if universe_file is None:
-                st.warning("Upload a universe file first.")
-            else:
-                if universe_file.name.endswith(".csv"):
-                    df_uploaded = pd.read_csv(universe_file)
+        btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 1.4])
+        with btn_col1:
+            if st.button("Apply", key="apply_screener_data", type="primary", use_container_width=True):
+                if universe_file is None:
+                    st.warning("Upload a file first.")
                 else:
-                    df_uploaded = pd.read_excel(universe_file)
+                    if universe_file.name.endswith(".csv"):
+                        df_uploaded = pd.read_csv(universe_file)
+                    else:
+                        df_uploaded = pd.read_excel(universe_file)
+                    df_uploaded.columns = [c.lower().strip() for c in df_uploaded.columns]
+                    if "ticker" not in df_uploaded.columns:
+                        st.error("File must contain a 'ticker' column.")
+                    else:
+                        universe = (
+                            df_uploaded["ticker"]
+                            .astype(str).str.upper().str.strip()
+                            .unique().tolist()
+                        )
+                        st.session_state["uploaded_universe"] = universe
+                        st.session_state["loaded_universe_key"] = None
+                        st.success(f"{len(universe)} tickers loaded.")
+        with btn_col2:
+            if st.button("Reset to Default", key="reset_screener_data", use_container_width=True):
+                st.session_state["uploaded_universe"] = _DEFAULT_SCREENER_TICKERS
+                st.session_state["loaded_universe_key"] = None
+                st.success(f"Reset to {len(_DEFAULT_SCREENER_TICKERS)} tickers.")
+        with btn_col3:
+            st.download_button(
+                "⬇ Sample",
+                data=screener_sample_csv,
+                file_name="screener_universe_example.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
-                df_uploaded.columns = [c.lower().strip() for c in df_uploaded.columns]
-                if "ticker" not in df_uploaded.columns:
-                    st.error("File must contain a 'ticker' column.")
-                else:
-                    universe = (
-                        df_uploaded["ticker"]
-                        .astype(str)
-                        .str.upper()
-                        .str.strip()
-                        .unique()
-                        .tolist()
-                    )
-                    st.session_state["uploaded_universe"] = universe
-                    st.session_state["loaded_universe_key"] = None
-                    st.success(f"Screener universe updated: {len(universe)} tickers.")
-
-        if st.button("Reset Screener to Default", key="reset_screener_data"):
-            st.session_state["uploaded_universe"] = _DEFAULT_SCREENER_TICKERS
-            st.session_state["loaded_universe_key"] = None
-            st.success(f"Screener universe reset to default ({len(_DEFAULT_SCREENER_TICKERS)} tickers).")
-
-    # ── PORTFOLIO CONTROLS ────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════
+    # RIGHT — PORTFOLIO CONTROLS
+    # ══════════════════════════════════════════════════════
     with col_right:
-        st.markdown("### Portfolio Controls")
 
-        # Format reference card
+        st.markdown('<p class="section-label">Portfolio Transactions</p>', unsafe_allow_html=True)
+
+        # ── column pills ──────────────────────────────────
         st.markdown(
-            """
-            <div class="data-card">
-              <h3>📄 Expected File Format</h3>
-              <div class="subtitle">CSV only — five required columns:</div>
-              <div>
-                <span class="req-col">date</span>
-                <span class="req-col">ticker</span>
-                <span class="req-col">action</span>
-                <span class="req-col">shares</span>
-                <span class="req-col">price</span>
-              </div>
-              <div class="note-text">
-                • <strong style="color:#e0e0f0;">date</strong> — any standard format (e.g. 2024-01-15 or 1/15/2024)<br>
-                • <strong style="color:#e0e0f0;">ticker</strong> — leave blank for <em>deposit</em> and <em>withdrawal</em> rows<br>
-                • <strong style="color:#e0e0f0;">action</strong> — one of five values:
-              </div>
-              <table style="margin:6px 0 4px 12px;border-collapse:collapse;font-size:11.5px;color:#ccc;width:calc(100% - 12px);">
-                <tr>
-                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">buy</td>
-                  <td style="padding:3px 0;color:#999;">Purchase shares — subtracts cash, adds shares to holdings</td>
-                </tr>
-                <tr>
-                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">sell</td>
-                  <td style="padding:3px 0;color:#999;">Sell shares — adds cash proceeds, reduces holdings</td>
-                </tr>
-                <tr>
-                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">deposit</td>
-                  <td style="padding:3px 0;color:#999;">Cash added to the account — counted as money invested (XIRR outflow)</td>
-                </tr>
-                <tr>
-                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">withdrawal</td>
-                  <td style="padding:3px 0;color:#999;">Cash taken out — reduces net invested, treated as XIRR inflow</td>
-                </tr>
-                <tr>
-                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">dividend</td>
-                  <td style="padding:3px 0;color:#999;">Cash dividend received — adds cash, does not affect share count</td>
-                </tr>
-              </table>
-              <div class="note-text">
-                • <strong style="color:#e0e0f0;">shares</strong> — number of shares traded; use <strong style="color:#e0e0f0;">0</strong> for deposit, withdrawal &amp; dividend rows<br>
-                • <strong style="color:#e0e0f0;">price</strong> — price per share for buy/sell; cash amount for deposit, withdrawal &amp; dividend
-              </div>
+            '''<div style="margin-bottom:6px;">
+              <span class="req-col">date</span>
+              <span class="req-col">ticker</span>
+              <span class="req-col">action</span>
+              <span class="req-col">shares</span>
+              <span class="req-col">price</span>
             </div>
-            """,
+            <div class="fmt-hint">
+              Accepts <strong style="color:#ccc;">.csv</strong> only.
+              Leave <strong style="color:#ccc;">ticker</strong> blank for cash events.
+              Use <strong style="color:#ccc;">0</strong> for shares on deposit / withdrawal / dividend rows.
+            </div>''',
             unsafe_allow_html=True,
         )
 
-        # Live preview of expected format
-        with st.expander("▶ View example layout", expanded=False):
+        # ── action legend ─────────────────────────────────
+        st.markdown(
+            '''<table class="action-table">
+              <tr>
+                <td class="action-key">buy</td>
+                <td class="action-desc">Purchase shares &mdash; adds to holdings, subtracts cash</td>
+              </tr>
+              <tr>
+                <td class="action-key">sell</td>
+                <td class="action-desc">Sell shares &mdash; reduces holdings, adds cash proceeds</td>
+              </tr>
+              <tr>
+                <td class="action-key">deposit</td>
+                <td class="action-desc">Cash added to account &mdash; counts as money invested <em>(XIRR outflow)</em></td>
+              </tr>
+              <tr>
+                <td class="action-key">withdrawal</td>
+                <td class="action-desc">Cash taken out &mdash; reduces net invested <em>(XIRR inflow)</em></td>
+              </tr>
+              <tr>
+                <td class="action-key">dividend</td>
+                <td class="action-desc">Cash dividend received &mdash; adds cash, share count unchanged</td>
+              </tr>
+            </table>''',
+            unsafe_allow_html=True,
+        )
+
+        # ── example table (open by default) ───────────────
+        with st.expander("Example layout", expanded=True):
             st.dataframe(
                 pd.DataFrame({
                     "date":   ["2024-01-15", "2024-01-15", "2024-02-01", "2024-02-10", "2024-03-01", "2024-03-15", "2024-04-01", "2024-04-10"],
                     "ticker": ["",           "AAPL",       "MSFT",       "AAPL",       "NVDA",        "",           "AAPL",       ""],
                     "action": ["deposit",    "buy",        "buy",        "sell",       "buy",         "deposit",    "dividend",   "withdrawal"],
                     "shares": [0,            10,           5,            3,            8,             0,            0,            0],
-                    "price":  [5000,         185.50,       375.20,       192.30,       620.10,        1000,         0.25,         2500],
+                    "price":  [5000.00,      185.50,       375.20,       192.30,       620.10,        1000.00,      0.25,         2500.00],
                 }),
                 hide_index=True,
                 use_container_width=True,
@@ -988,11 +994,20 @@ if st.session_state["page"] == "data_controls":
                     "ticker": st.column_config.TextColumn("ticker", width="small"),
                     "action": st.column_config.TextColumn("action", width="small"),
                     "shares": st.column_config.NumberColumn("shares", width="small", format="%g"),
-                    "price":  st.column_config.NumberColumn("price", width="small", format="%.2f"),
+                    "price":  st.column_config.NumberColumn("price ($)", width="small", format="%.2f"),
                 },
             )
 
-        # Download sample file
+        st.markdown('<hr class="col-divider">', unsafe_allow_html=True)
+
+        # ── controls ──────────────────────────────────────
+        tx_file = st.file_uploader(
+            "Upload transactions CSV",
+            type=["csv"],
+            key="data_controls_transactions_file",
+            label_visibility="collapsed",
+        )
+
         portfolio_sample_csv = (
             "date,ticker,action,shares,price\n"
             "2024-01-15,,deposit,0,5000\n"
@@ -1006,34 +1021,29 @@ if st.session_state["page"] == "data_controls":
             "2024-04-10,NVDA,sell,2,850.00\n"
             "2024-05-01,,withdrawal,0,2500\n"
         )
-        st.download_button(
-            label="⬇ Download sample portfolio CSV",
-            data=portfolio_sample_csv,
-            file_name="portfolio_transactions_example.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
 
-        tx_file = st.file_uploader(
-            "Transactions CSV",
-            type=["csv"],
-            key="data_controls_transactions_file",
-            help="Columns: date, ticker, action, shares, price",
-        )
-
-        if st.button("Apply Portfolio File", key="apply_portfolio_data", type="primary"):
-            if tx_file is None:
-                st.warning("Upload a transactions CSV first.")
-            else:
-                if load_transactions_from_csv(tx_file):
-                    st.success("Portfolio transactions loaded.")
+        btn_col4, btn_col5, btn_col6 = st.columns([2, 1.6, 1.4])
+        with btn_col4:
+            if st.button("Apply", key="apply_portfolio_data", type="primary", use_container_width=True):
+                if tx_file is None:
+                    st.warning("Upload a file first.")
                 else:
-                    st.error("Could not parse uploaded portfolio CSV.")
-
-        if st.button("Go to Performance", key="go_to_performance"):
-            st.session_state["page"] = "performance"
-            st.rerun()
-
+                    if load_transactions_from_csv(tx_file):
+                        st.success("Transactions loaded.")
+                    else:
+                        st.error("Could not parse the file.")
+        with btn_col5:
+            if st.button("Go to Performance →", key="go_to_performance", use_container_width=True):
+                st.session_state["page"] = "performance"
+                st.rerun()
+        with btn_col6:
+            st.download_button(
+                "⬇ Sample",
+                data=portfolio_sample_csv,
+                file_name="portfolio_transactions_example.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 # =========================================================
 # DASHBOARD PAGE
 # =========================================================
