@@ -694,14 +694,6 @@ if st.sidebar.button("Screener", width="stretch", type="primary" if current_page
     st.session_state["page"] = "dashboard"
     st.rerun()
 
-# Show currently selected ticker
-if st.session_state.get("selected_ticker") and show_ticker_selector:
-    st.sidebar.markdown(
-        f'<div style="text-align:center;font-size:12px;color:#888;padding:2px 0 6px 0;">'
-        f'Selected: <strong style="color:#e0e0f0;">{st.session_state["selected_ticker"]}</strong>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
 
 if st.sidebar.button("Tearsheet", width="stretch", type="primary" if current_page == "tearsheet" else "secondary"):
     if selected_ticker:
