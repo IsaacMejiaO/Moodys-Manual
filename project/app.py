@@ -1143,4 +1143,4 @@ elif st.session_state["page"] == "performance":
 # FOOTER
 # =========================================================
 st.sidebar.markdown("---")
-st.sidebar.caption("Data: SEC EDGAR + Yahoo Finance")
+
