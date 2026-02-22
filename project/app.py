@@ -683,6 +683,9 @@ st.session_state["company_df"] = df
 # Navigation
 st.sidebar.markdown("---")
 
+selected_ticker = st.session_state.get("selected_ticker")
+show_ticker_selector = current_page in {"dashboard", "tearsheet", "multiples", "ratios"}
+
 if st.sidebar.button("Data", width="stretch", type="primary" if current_page == "data_controls" else "secondary"):
     st.session_state["page"] = "data_controls"
     st.rerun()
@@ -699,9 +702,6 @@ if st.session_state.get("selected_ticker") and show_ticker_selector:
         f'</div>',
         unsafe_allow_html=True,
     )
-
-selected_ticker = st.session_state.get("selected_ticker")
-show_ticker_selector = current_page in {"dashboard", "tearsheet", "multiples", "ratios"}
 
 if st.sidebar.button("Tearsheet", width="stretch", type="primary" if current_page == "tearsheet" else "secondary"):
     if selected_ticker:
