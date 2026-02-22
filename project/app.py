@@ -691,42 +691,38 @@ if st.sidebar.button("Screener", width="stretch", type="primary" if current_page
     st.session_state["page"] = "dashboard"
     st.rerun()
 
-selected_ticker = None
-show_ticker_selector = current_page in {"dashboard", "tearsheet", "multiples", "ratios"}
-if not df.empty and show_ticker_selector:
-    selected_ticker = st.sidebar.selectbox(
-        "ticker",
-        options=sorted(df["Ticker"].tolist()),
-        index=None,
-        placeholder="Search ticker...",
-        key="sidebar_ticker_select",
-        label_visibility="collapsed",
-        on_change=preload_ticker_data
+# Show currently selected ticker
+if st.session_state.get("selected_ticker") and show_ticker_selector:
+    st.sidebar.markdown(
+        f'<div style="text-align:center;font-size:12px;color:#888;padding:2px 0 6px 0;">'
+        f'Selected: <strong style="color:#e0e0f0;">{st.session_state["selected_ticker"]}</strong>'
+        f'</div>',
+        unsafe_allow_html=True,
     )
+
+selected_ticker = st.session_state.get("selected_ticker")
+show_ticker_selector = current_page in {"dashboard", "tearsheet", "multiples", "ratios"}
 
 if st.sidebar.button("Tearsheet", width="stretch", type="primary" if current_page == "tearsheet" else "secondary"):
     if selected_ticker:
-        st.session_state["selected_ticker"] = selected_ticker
         st.session_state["page"] = "tearsheet"
         st.rerun()
     else:
-        st.sidebar.warning("Select a ticker first.")
+        st.sidebar.warning("Click a ticker row in the Screener first.")
 
 if st.sidebar.button("Multiples", width="stretch", type="primary" if current_page == "multiples" else "secondary"):
     if selected_ticker:
-        st.session_state["selected_ticker"] = selected_ticker
         st.session_state["page"] = "multiples"
         st.rerun()
     else:
-        st.sidebar.warning("Select a ticker first.")
+        st.sidebar.warning("Click a ticker row in the Screener first.")
 
 if st.sidebar.button("Ratios", width="stretch", type="primary" if current_page == "ratios" else "secondary"):
     if selected_ticker:
-        st.session_state["selected_ticker"] = selected_ticker
         st.session_state["page"] = "ratios"
         st.rerun()
     else:
-        st.sidebar.warning("Select a ticker first.")
+        st.sidebar.warning("Click a ticker row in the Screener first.")
 
 if st.sidebar.button("Portfolio", width="stretch", type="primary" if current_page == "portfolio_monte_carlo" else "secondary"):
     st.session_state["page"] = "portfolio_monte_carlo"
@@ -1052,13 +1048,26 @@ elif st.session_state["page"] == "dashboard":
                     col, format="%.1f", width="small"
                 )
 
-        st.dataframe(
+        event = st.dataframe(
             df_display,
             column_config=column_config,
             use_container_width=True,
             height=620,
             hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
         )
+
+        # Handle row click — update selected ticker immediately
+        selected_rows = event.selection.rows
+        if selected_rows:
+            clicked_ticker = df_display.iloc[selected_rows[0]]["Ticker"]
+            if clicked_ticker != st.session_state.get("selected_ticker"):
+                st.session_state["selected_ticker"] = clicked_ticker
+                # Preload data in background for instant navigation
+                with st.spinner(f"Loading {clicked_ticker}..."):
+                    get_or_load_ticker_data(clicked_ticker)
+                st.rerun()
 
         # Show errors if any
         if not error_df.empty:
