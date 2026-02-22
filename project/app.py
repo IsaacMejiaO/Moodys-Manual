@@ -923,111 +923,151 @@ elif st.session_state["page"] == "dashboard":
     else:
         df_adj = df.copy()
 
-        # Fix percentage scaling for margin columns
-        for col in ["Gross Margin %", "EBIT Margin %", "EBITDA Margin %", "Net Margin %", "ROIC %"]:
-            if col in df_adj.columns:
-                df_adj[col] = df_adj[col] / 100.0
-
-        # Format percentage columns
-        margin_cols = ["Gross Margin %", "EBIT Margin %", "EBITDA Margin %", "Net Margin %", "ROIC %"]
-        for col in margin_cols:
-            if col in df_adj.columns:
-                df_adj[col] = df_adj[col].apply(lambda x: f"{x:.0%}" if pd.notna(x) else "")
-
-        # Format CAGR columns
-        cagr_cols = ["Revenue 2yr CAGR %", "Revenue 3yr CAGR %", "LFCF 3yr CAGR %"]
-        for col in cagr_cols:
-            if col in df_adj.columns:
-                df_adj[col] = df_adj[col].apply(lambda x: f"{x:.0f}%" if pd.notna(x) else "")
-
-        # Format PEG ratios
-        peg_cols = ["PEG (PE LTM)", "PEG (Lynch)"]
-        for col in peg_cols:
-            if col in df_adj.columns:
-                df_adj[col] = df_adj[col].apply(lambda x: f"{x:.0%}" if pd.notna(x) else "")
-
-        # Format Market Cap
-        if "Market Cap (M)" in df_adj.columns:
-            df_adj["Market Cap (M)"] = df_adj["Market Cap (M)"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
-
-        # Format FCF Yield
-        if "FCF Yield %" in df_adj.columns:
-            df_adj["FCF Yield %"] = df_adj["FCF Yield %"].apply(lambda x: f"{x:.0f}%" if pd.notna(x) else "")
-
-        # Remove unwanted columns for screener display
+        # ── Remove unwanted columns ───────────────────────────────────────────
         columns_to_remove = [
-            "ROA %", "ROE %", "RCE %", "SG&A Margin %", "R&D Margin %", 
+            "ROA %", "ROE %", "RCE %", "SG&A Margin %", "R&D Margin %",
             "LFCF Margin %", "UFCF Margin %", "CapEx % Revenue",
             "Total Asset Turnover", "AR Turnover", "Inventory Turnover",
-            "Current Ratio", "Quick Ratio", "Avg Days Sales Outstanding", 
-            "Avg Days Inventory Outstanding", "Avg Days Payable Outstanding", 
-            "Cash Conversion Cycle", 
-            "Total D/E", "Total D/Capital", "LT D/E", "LT D/Capital", 
-            "Total Liab/Assets", "EBIT/Interest", "EBITDA/Interest", 
+            "Current Ratio", "Quick Ratio", "Avg Days Sales Outstanding",
+            "Avg Days Inventory Outstanding", "Avg Days Payable Outstanding",
+            "Cash Conversion Cycle",
+            "Total D/E", "Total D/Capital", "LT D/E", "LT D/Capital",
+            "Total Liab/Assets", "EBIT/Interest", "EBITDA/Interest",
             "Total Debt/Interest", "Net Debt/Interest", "Altman Z-Score",
-            "Revenue YoY %", "Gross Profit YoY %", "EBIT YoY %", "EBITDA YoY %", 
-            "Net Income YoY %", "EPS YoY %", "Diluted EPS YoY %", "AR YoY %", 
-            "Inventory YoY %", "Net PP&E YoY %", "Total Assets YoY %", 
+            "Revenue YoY %", "Gross Profit YoY %", "EBIT YoY %", "EBITDA YoY %",
+            "Net Income YoY %", "EPS YoY %", "Diluted EPS YoY %", "AR YoY %",
+            "Inventory YoY %", "Net PP&E YoY %", "Total Assets YoY %",
             "Total Liabilities YoY %", "Total Equity YoY %",
-            "Gross Profit 2yr CAGR %", "EBIT 2yr CAGR %", "EBITDA 2yr CAGR %", 
-            "Net Income 2yr CAGR %", "EPS 2yr CAGR %", "Diluted EPS 2yr CAGR %", 
-            "AR 2yr CAGR %", "Inventory 2yr CAGR %", "Net PP&E 2yr CAGR %", 
-            "Total Assets 2yr CAGR %", "Total Liabilities 2yr CAGR %", 
+            "Gross Profit 2yr CAGR %", "EBIT 2yr CAGR %", "EBITDA 2yr CAGR %",
+            "Net Income 2yr CAGR %", "EPS 2yr CAGR %", "Diluted EPS 2yr CAGR %",
+            "AR 2yr CAGR %", "Inventory 2yr CAGR %", "Net PP&E 2yr CAGR %",
+            "Total Assets 2yr CAGR %", "Total Liabilities 2yr CAGR %",
             "Total Equity 2yr CAGR %", "LFCF 2yr CAGR %",
-            "Gross Profit 3yr CAGR %", "EBIT 3yr CAGR %", "EBITDA 3yr CAGR %", 
-            "Net Income 3yr CAGR %", "EPS 3yr CAGR %", "Diluted EPS 3yr CAGR %", 
-            "AR 3yr CAGR %", "Inventory 3yr CAGR %", "Net PP&E 3yr CAGR %", 
-            "Total Assets 3yr CAGR %", "Total Liabilities 3yr CAGR %", 
+            "Gross Profit 3yr CAGR %", "EBIT 3yr CAGR %", "EBITDA 3yr CAGR %",
+            "Net Income 3yr CAGR %", "EPS 3yr CAGR %", "Diluted EPS 3yr CAGR %",
+            "AR 3yr CAGR %", "Inventory 3yr CAGR %", "Net PP&E 3yr CAGR %",
+            "Total Assets 3yr CAGR %", "Total Liabilities 3yr CAGR %",
             "Total Equity 3yr CAGR %",
-            "Gross Profit 5yr CAGR %", "EBIT 5yr CAGR %", "EBITDA 5yr CAGR %", 
-            "Net Income 5yr CAGR %", "EPS 5yr CAGR %", "Diluted EPS 5yr CAGR %", 
-            "AR 5yr CAGR %", "Inventory 5yr CAGR %", "Inventory 5yr acCAGR %", "Net PP&E 5yr CAGR %", 
-            "Total Assets 5yr CAGR %", "Total Liabilities 5yr CAGR %", 
-            "Total Equity 5yr CAGR %", "LFCF 5yr CAGR %", "Revenue 5yr CAGR %"
+            "Gross Profit 5yr CAGR %", "EBIT 5yr CAGR %", "EBITDA 5yr CAGR %",
+            "Net Income 5yr CAGR %", "EPS 5yr CAGR %", "Diluted EPS 5yr CAGR %",
+            "AR 5yr CAGR %", "Inventory 5yr CAGR %", "Inventory 5yr acCAGR %", "Net PP&E 5yr CAGR %",
+            "Total Assets 5yr CAGR %", "Total Liabilities 5yr CAGR %",
+            "Total Equity 5yr CAGR %", "LFCF 5yr CAGR %", "Revenue 5yr CAGR %",
         ]
-
         for col in columns_to_remove:
             if col in df_adj.columns:
                 df_adj = df_adj.drop(columns=[col])
+
+        # ── Keep numeric columns as numbers (enables proper sort) ─────────────
+        # Margins arrive as raw % values (e.g. 45.2 means 45.2%). No conversion needed.
 
         st.markdown(
             '<h1 style="font-size:32px;font-weight:800;color:#ffffff;margin-bottom:4px;">Screener</h1>',
             unsafe_allow_html=True,
         )
 
-        id_cols = [c for c in ["Ticker", "Company", "Name"] if c in df_adj.columns]
+        # ── CSS: wrap headers, tighten cells ─────────────────────────────────
+        st.markdown(
+            """
+            <style>
+            [data-testid="stDataFrame"] th div[data-testid="column-header-cell-text"],
+            [data-testid="stDataFrame"] th span {
+                white-space: normal !important;
+                word-break: break-word !important;
+                line-height: 1.3 !important;
+            }
+            [data-testid="stDataFrame"] thead th {
+                vertical-align: top !important;
+                min-height: 52px !important;
+            }
+            [data-testid="stDataFrame"] td,
+            [data-testid="stDataFrame"] th {
+                padding: 4px 6px !important;
+                font-size: 13px !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # ── Filter to rows with at least one metric value ─────────────────────
+        id_cols = [c for c in ["Ticker", "Company", "Name", "Industry"] if c in df_adj.columns]
         metric_cols = [c for c in df_adj.columns if c not in id_cols]
         if metric_cols:
-            has_metric_data = df_adj[metric_cols].apply(
-                lambda row: any(pd.notna(v) and str(v).strip() != "" for v in row),
+            has_data = df_adj[metric_cols].apply(
+                lambda row: any(pd.notna(v) and str(v).strip() not in ("", "nan") for v in row),
                 axis=1,
             )
-            df_display = df_adj.loc[has_metric_data].copy()
+            df_display = df_adj.loc[has_data].copy()
         else:
-            has_any_data = df_adj.apply(
-                lambda row: any(pd.notna(v) and str(v).strip() != "" for v in row),
-                axis=1,
-            )
-            df_display = df_adj.loc[has_any_data].copy()
+            df_display = df_adj.dropna(how="all").copy()
 
-        compact_columns = {
-            c: st.column_config.Column(c, width="small")
-            for c in df_display.columns
+        # ── Column config: proper formatters + autofit widths ─────────────────
+        # Width is driven by header character length so every column is as
+        # narrow as its label allows, keeping the table dense.
+        def _autofit_width(col: str) -> str:
+            n = len(col)
+            if n <= 6:
+                return "small"
+            elif n <= 14:
+                return "medium"
+            else:
+                return "large"
+
+        # Columns displayed as percentage (values are already in % units, e.g. 45.2)
+        pct_cols = {
+            "Gross Margin %", "EBIT Margin %", "EBITDA Margin %",
+            "Net Margin %", "ROIC %", "FCF Yield %",
+            "Revenue 2yr CAGR %", "Revenue 3yr CAGR %", "LFCF 3yr CAGR %",
         }
+        # Ratio / plain-number columns (PEG, PE)
+        ratio_cols = {"PEG (PE LTM)", "PEG (Lynch)", "PE LTM"}
+        # Market cap: large integer formatted with commas
+        mktcap_cols = {"Market Cap (M)"}
+        # Text identity columns
+        text_cols = {"Ticker", "Company", "Name", "Industry"}
 
-        st.data_editor(
+        column_config = {}
+        for col in df_display.columns:
+            w = _autofit_width(col)
+            if col in text_cols:
+                # Text: fixed widths for readability
+                if col == "Ticker":
+                    column_config[col] = st.column_config.TextColumn(col, width="small")
+                elif col in ("Company", "Name"):
+                    column_config[col] = st.column_config.TextColumn(col, width="medium")
+                else:
+                    column_config[col] = st.column_config.TextColumn(col, width="medium")
+            elif col in mktcap_cols:
+                column_config[col] = st.column_config.NumberColumn(
+                    col, format="%,.0f", width=w
+                )
+            elif col in pct_cols:
+                column_config[col] = st.column_config.NumberColumn(
+                    col, format="%.1f%%", width=w
+                )
+            elif col in ratio_cols:
+                column_config[col] = st.column_config.NumberColumn(
+                    col, format="%.2f", width=w
+                )
+            else:
+                # Default numeric: one decimal
+                column_config[col] = st.column_config.NumberColumn(
+                    col, format="%.1f", width=w
+                )
+
+        st.dataframe(
             df_display,
-            column_config=compact_columns,
-            disabled=True,
-            width="stretch",
-            height=600,
+            column_config=column_config,
+            use_container_width=True,
+            height=620,
             hide_index=True,
         )
 
         # Show errors if any
         if not error_df.empty:
             with st.expander(f"⚠️ Errors ({len(error_df)} tickers failed)"):
-                st.dataframe(error_df, width="stretch")
+                st.dataframe(error_df, use_container_width=True)
 
 # =========================================================
 # TEARSHEET PAGE
