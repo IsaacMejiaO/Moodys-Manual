@@ -84,8 +84,7 @@ if "loaded_error_df" not in st.session_state:
     st.session_state["loaded_error_df"] = pd.DataFrame()
 if "loaded_sic_map" not in st.session_state:
     st.session_state["loaded_sic_map"] = {}
-if "use_parallel_load" not in st.session_state:
-    st.session_state["use_parallel_load"] = True
+# Parallel loading is always enabled
 
 # ---------------------------------------------------------
 # AUTO-LOAD: Custom Screener Universe (mirrors Performance page pattern)
@@ -648,9 +647,6 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-use_parallel = st.session_state.get("use_parallel_load", True)
-# uploaded_universe is always set now (auto-loaded from CSV or hardcoded default).
-# Fall back to the legacy UNIVERSE constant only as a last resort.
 universe = st.session_state.get("uploaded_universe") or UNIVERSE
 
 # Load data
@@ -669,12 +665,7 @@ if needs_reload:
     if len(universe) > 50:
         st.info(f"📊 Loading {len(universe)} tickers... This may take 1-2 minutes. Using parallel loading for speed.")
 
-    # Use parallel loading if enabled and universe is large
-    if use_parallel and len(universe) > 10:
-        df, error_df, sic_map = load_data_with_progress_parallel(universe, max_workers=20)
-    else:
-        # Fall back to sequential loading for small universes
-        df, error_df, sic_map = load_data_with_progress_parallel(universe, max_workers=1)
+    df, error_df, sic_map = load_data_with_progress_parallel(universe, max_workers=20)
 
     st.session_state["loaded_universe_key"] = cache_key
     st.session_state["loaded_df"] = df
@@ -754,73 +745,11 @@ if st.session_state["page"] == "data_controls":
         '''<h1 style="font-size:32px;font-weight:800;color:#ffffff;margin-bottom:2px;">Data</h1>''',
         unsafe_allow_html=True,
     )
+    st.caption("Upload and manage Screener universe data and Portfolio transactions from one page.")
 
     st.markdown(
         """
         <style>
-        /* ── section divider label ── */
-        .section-label {
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.10em;
-            text-transform: uppercase;
-            color: #555;
-            margin: 0 0 10px 0;
-        }
-        /* ── column pills for required/optional ── */
-        .req-col {
-            display: inline-block;
-            background: #1a3a1a;
-            color: #6dcc6d;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 2px 8px;
-            margin: 2px 3px 2px 0;
-            letter-spacing: 0.03em;
-        }
-        .opt-col {
-            display: inline-block;
-            background: #2e2a12;
-            color: #c8b46d;
-            border-radius: 4px;
-            font-size: 11px;
-            padding: 2px 8px;
-            margin: 2px 3px 2px 0;
-        }
-        /* ── action legend table ── */
-        .action-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 12px;
-            margin: 8px 0 6px 0;
-        }
-        .action-table td {
-            padding: 4px 8px 4px 0;
-            vertical-align: top;
-            line-height: 1.4;
-        }
-        .action-key {
-            color: #7ec8ff;
-            font-weight: 700;
-            white-space: nowrap;
-            width: 90px;
-        }
-        .action-desc {
-            color: #888;
-        }
-        .action-desc em {
-            color: #aaa;
-            font-style: normal;
-        }
-        /* ── format hint line ── */
-        .fmt-hint {
-            font-size: 11.5px;
-            color: #666;
-            margin: 4px 0 10px 0;
-            line-height: 1.5;
-        }
-        /* ── divider between sections ── */
         .col-divider {
             border: none;
             border-top: 1px solid #2a2a3a;
@@ -837,24 +766,8 @@ if st.session_state["page"] == "data_controls":
     # LEFT — SCREENER DATA
     # ══════════════════════════════════════════════════════
     with col_left:
+        st.markdown("### Screener Data")
 
-        st.markdown('<p class="section-label">Screener Universe</p>', unsafe_allow_html=True)
-
-        # ── column pills ──────────────────────────────────
-        st.markdown(
-            '''<div style="margin-bottom:6px;">
-              <span class="req-col">ticker</span>
-              <span class="opt-col">company &nbsp;optional</span>
-            </div>
-            <div class="fmt-hint">
-              One ticker per row &mdash; standard symbols (AAPL, MSFT&hellip;)<br>
-              Accepts <strong style="color:#ccc;">.csv</strong> and <strong style="color:#ccc;">.xlsx</strong>.
-              Only the <strong style="color:#ccc;">ticker</strong> column is read; all others are ignored.
-            </div>''',
-            unsafe_allow_html=True,
-        )
-
-        # ── example table (open by default) ───────────────
         with st.expander("Example layout", expanded=True):
             st.dataframe(
                 pd.DataFrame({
@@ -872,16 +785,8 @@ if st.session_state["page"] == "data_controls":
 
         st.markdown('<hr class="col-divider">', unsafe_allow_html=True)
 
-        # ── controls ──────────────────────────────────────
-        st.checkbox(
-            "Parallel load",
-            value=st.session_state.get("use_parallel_load", True),
-            key="use_parallel_load",
-            help="Faster for larger universes",
-        )
-
         universe_file = st.file_uploader(
-            "Upload universe file",
+            "Universe file",
             type=["csv", "xlsx"],
             key="data_controls_universe_file",
             label_visibility="collapsed",
@@ -891,7 +796,7 @@ if st.session_state["page"] == "data_controls":
 
         btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 1.4])
         with btn_col1:
-            if st.button("Apply", key="apply_screener_data", type="primary", use_container_width=True):
+            if st.button("Apply Screener Data", key="apply_screener_data", type="primary", use_container_width=True):
                 if universe_file is None:
                     st.warning("Upload a file first.")
                 else:
@@ -910,12 +815,12 @@ if st.session_state["page"] == "data_controls":
                         )
                         st.session_state["uploaded_universe"] = universe
                         st.session_state["loaded_universe_key"] = None
-                        st.success(f"{len(universe)} tickers loaded.")
+                        st.success(f"Screener universe updated: {len(universe)} tickers.")
         with btn_col2:
             if st.button("Reset to Default", key="reset_screener_data", use_container_width=True):
                 st.session_state["uploaded_universe"] = _DEFAULT_SCREENER_TICKERS
                 st.session_state["loaded_universe_key"] = None
-                st.success(f"Reset to {len(_DEFAULT_SCREENER_TICKERS)} tickers.")
+                st.success(f"Screener universe reset to default ({len(_DEFAULT_SCREENER_TICKERS)} tickers).")
         with btn_col3:
             st.download_button(
                 "⬇ Sample",
@@ -929,54 +834,8 @@ if st.session_state["page"] == "data_controls":
     # RIGHT — PORTFOLIO CONTROLS
     # ══════════════════════════════════════════════════════
     with col_right:
+        st.markdown("### Portfolio Controls")
 
-        st.markdown('<p class="section-label">Portfolio Transactions</p>', unsafe_allow_html=True)
-
-        # ── column pills ──────────────────────────────────
-        st.markdown(
-            '''<div style="margin-bottom:6px;">
-              <span class="req-col">date</span>
-              <span class="req-col">ticker</span>
-              <span class="req-col">action</span>
-              <span class="req-col">shares</span>
-              <span class="req-col">price</span>
-            </div>
-            <div class="fmt-hint">
-              Accepts <strong style="color:#ccc;">.csv</strong> only.
-              Leave <strong style="color:#ccc;">ticker</strong> blank for cash events.
-              Use <strong style="color:#ccc;">0</strong> for shares on deposit / withdrawal / dividend rows.
-            </div>''',
-            unsafe_allow_html=True,
-        )
-
-        # ── action legend ─────────────────────────────────
-        st.markdown(
-            '''<table class="action-table">
-              <tr>
-                <td class="action-key">buy</td>
-                <td class="action-desc">Purchase shares &mdash; adds to holdings, subtracts cash</td>
-              </tr>
-              <tr>
-                <td class="action-key">sell</td>
-                <td class="action-desc">Sell shares &mdash; reduces holdings, adds cash proceeds</td>
-              </tr>
-              <tr>
-                <td class="action-key">deposit</td>
-                <td class="action-desc">Cash added to account &mdash; counts as money invested <em>(XIRR outflow)</em></td>
-              </tr>
-              <tr>
-                <td class="action-key">withdrawal</td>
-                <td class="action-desc">Cash taken out &mdash; reduces net invested <em>(XIRR inflow)</em></td>
-              </tr>
-              <tr>
-                <td class="action-key">dividend</td>
-                <td class="action-desc">Cash dividend received &mdash; adds cash, share count unchanged</td>
-              </tr>
-            </table>''',
-            unsafe_allow_html=True,
-        )
-
-        # ── example table (open by default) ───────────────
         with st.expander("Example layout", expanded=True):
             st.dataframe(
                 pd.DataFrame({
@@ -1000,9 +859,8 @@ if st.session_state["page"] == "data_controls":
 
         st.markdown('<hr class="col-divider">', unsafe_allow_html=True)
 
-        # ── controls ──────────────────────────────────────
         tx_file = st.file_uploader(
-            "Upload transactions CSV",
+            "Transactions CSV",
             type=["csv"],
             key="data_controls_transactions_file",
             label_visibility="collapsed",
@@ -1024,12 +882,12 @@ if st.session_state["page"] == "data_controls":
 
         btn_col4, btn_col5, btn_col6 = st.columns([2, 1.6, 1.4])
         with btn_col4:
-            if st.button("Apply", key="apply_portfolio_data", type="primary", use_container_width=True):
+            if st.button("Apply Portfolio File", key="apply_portfolio_data", type="primary", use_container_width=True):
                 if tx_file is None:
                     st.warning("Upload a file first.")
                 else:
                     if load_transactions_from_csv(tx_file):
-                        st.success("Transactions loaded.")
+                        st.success("Portfolio transactions loaded.")
                     else:
                         st.error("Could not parse the file.")
         with btn_col5:
