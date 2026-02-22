@@ -745,8 +745,6 @@ if st.session_state["page"] == "data_controls":
         '''<h1 style="font-size:32px;font-weight:800;color:#ffffff;margin-bottom:2px;">Data</h1>''',
         unsafe_allow_html=True,
     )
-    st.caption("Upload and manage Screener universe data and Portfolio transactions from one page.")
-
     st.markdown(
         """
         <style>
