@@ -665,6 +665,10 @@ if needs_reload:
     st.session_state["ticker_data_cache"] = {}
     st.session_state["ticker_summary_cache"] = {}
 
+    # Show estimated time for large universes
+    if len(universe) > 50:
+        st.info(f"📊 Loading {len(universe)} tickers... This may take 1-2 minutes. Using parallel loading for speed.")
+
     # Use parallel loading if enabled and universe is large
     if use_parallel and len(universe) > 10:
         df, error_df, sic_map = load_data_with_progress_parallel(universe, max_workers=20)
@@ -746,15 +750,119 @@ if st.sidebar.button("Performance", width="stretch", type="primary" if current_p
 # =========================================================
 if st.session_state["page"] == "data_controls":
     st.markdown(
-        '<h1 style="font-size:32px;font-weight:800;color:#ffffff;margin-bottom:4px;">Data</h1>',
+        '''<h1 style="font-size:32px;font-weight:800;color:#ffffff;margin-bottom:4px;">Data</h1>''',
         unsafe_allow_html=True,
     )
     st.caption("Upload and manage Screener universe data and Portfolio transactions from one page.")
 
+    # ── Shared card style ──────────────────────────────────────────────────
+    st.markdown(
+        """
+        <style>
+        .data-card {
+            background: #1a1a2e;
+            border: 1px solid #2d2d4e;
+            border-radius: 10px;
+            padding: 20px 24px 16px 24px;
+            margin-bottom: 12px;
+        }
+        .data-card h3 {
+            margin: 0 0 4px 0;
+            font-size: 16px;
+            font-weight: 700;
+            color: #e0e0f0;
+            letter-spacing: 0.03em;
+        }
+        .data-card .subtitle {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 14px;
+        }
+        .format-badge {
+            display: inline-block;
+            background: #0d3b66;
+            color: #7ec8ff;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            margin-right: 4px;
+            letter-spacing: 0.04em;
+        }
+        .req-col {
+            display: inline-block;
+            background: #1e3a1e;
+            color: #6dcc6d;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 7px;
+            margin: 2px 3px 2px 0;
+            letter-spacing: 0.03em;
+        }
+        .opt-col {
+            display: inline-block;
+            background: #2e2a12;
+            color: #c8b46d;
+            border-radius: 4px;
+            font-size: 11px;
+            padding: 2px 7px;
+            margin: 2px 3px 2px 0;
+        }
+        .note-text {
+            font-size: 11.5px;
+            color: #999;
+            margin-top: 6px;
+            line-height: 1.5;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     col_left, col_right = st.columns([0.5, 0.5])
 
+    # ── SCREENER DATA ──────────────────────────────────────────────────────
     with col_left:
         st.markdown("### Screener Data")
+
+        # Format reference card
+        st.markdown(
+            """
+            <div class="data-card">
+              <h3>📄 Expected File Format</h3>
+              <div class="subtitle">CSV or Excel (.xlsx) with the following column:</div>
+              <div>
+                <span class="req-col">ticker</span>
+                <span class="opt-col">company (optional)</span>
+              </div>
+              <div class="note-text">
+                • One ticker per row — standard exchange symbols (e.g. AAPL, MSFT, NVDA)<br>
+                • Column header must be exactly <strong style="color:#e0e0f0;">ticker</strong> (case-insensitive)<br>
+                • Additional columns are ignored — only <em>ticker</em> is read<br>
+                • Accepts <strong style="color:#e0e0f0;">.csv</strong> and <strong style="color:#e0e0f0;">.xlsx</strong> formats
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Live preview of the expected format
+        with st.expander("▶ View example layout", expanded=False):
+            st.dataframe(
+                pd.DataFrame({
+                    "ticker":  ["AAPL", "MSFT", "NVDA", "GOOGL", "META"],
+                    "company": ["Apple Inc.", "Microsoft Corp.", "NVIDIA Corp.", "Alphabet Inc.", "Meta Platforms"],
+                }),
+                hide_index=True,
+                use_container_width=True,
+                height=215,
+                column_config={
+                    "ticker":  st.column_config.TextColumn("ticker", width="small"),
+                    "company": st.column_config.TextColumn("company (optional)", width="medium"),
+                },
+            )
+
         st.checkbox(
             "Parallel load",
             value=st.session_state.get("use_parallel_load", True),
@@ -767,6 +875,16 @@ if st.session_state["page"] == "data_controls":
             type=["csv", "xlsx"],
             key="data_controls_universe_file",
             help="CSV/XLSX with a 'ticker' column",
+        )
+
+        # Download sample file
+        screener_sample_csv = "ticker,company\nAAPL,Apple Inc.\nMSFT,Microsoft Corp.\nNVDA,NVIDIA Corp.\nGOOGL,Alphabet Inc.\nMETA,Meta Platforms Inc.\n"
+        st.download_button(
+            label="⬇ Download sample screener CSV",
+            data=screener_sample_csv,
+            file_name="screener_universe_example.csv",
+            mime="text/csv",
+            use_container_width=True,
         )
 
         if st.button("Apply Screener Data", key="apply_screener_data", type="primary"):
@@ -799,8 +917,78 @@ if st.session_state["page"] == "data_controls":
             st.session_state["loaded_universe_key"] = None
             st.success(f"Screener universe reset to default ({len(_DEFAULT_SCREENER_TICKERS)} tickers).")
 
+    # ── PORTFOLIO CONTROLS ────────────────────────────────────────────────
     with col_right:
         st.markdown("### Portfolio Controls")
+
+        # Format reference card
+        st.markdown(
+            """
+            <div class="data-card">
+              <h3>📄 Expected File Format</h3>
+              <div class="subtitle">CSV only — five required columns:</div>
+              <div>
+                <span class="req-col">date</span>
+                <span class="req-col">ticker</span>
+                <span class="req-col">action</span>
+                <span class="req-col">shares</span>
+                <span class="req-col">price</span>
+              </div>
+              <div class="note-text">
+                • <strong style="color:#e0e0f0;">date</strong> — any standard format (e.g. 2024-01-15 or 1/15/2024)<br>
+                • <strong style="color:#e0e0f0;">ticker</strong> — leave blank for cash deposits / withdrawals<br>
+                • <strong style="color:#e0e0f0;">action</strong> — one of: <em>buy · sell · deposit · dividend</em><br>
+                • <strong style="color:#e0e0f0;">shares</strong> — number of shares (use 0 for deposits)<br>
+                • <strong style="color:#e0e0f0;">price</strong> — price per share, or cash amount for deposits
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Live preview of expected format
+        with st.expander("▶ View example layout", expanded=False):
+            st.dataframe(
+                pd.DataFrame({
+                    "date":   ["2024-01-15", "2024-01-15", "2024-02-01", "2024-02-10", "2024-03-01", "2024-03-15"],
+                    "ticker": ["",           "AAPL",       "MSFT",       "AAPL",       "NVDA",        ""],
+                    "action": ["deposit",    "buy",        "buy",        "sell",       "buy",         "deposit"],
+                    "shares": [0,            10,           5,            3,            8,             0],
+                    "price":  [5000,         185.50,       375.20,       192.30,       620.10,        1000],
+                }),
+                hide_index=True,
+                use_container_width=True,
+                height=245,
+                column_config={
+                    "date":   st.column_config.TextColumn("date", width="medium"),
+                    "ticker": st.column_config.TextColumn("ticker", width="small"),
+                    "action": st.column_config.TextColumn("action", width="small"),
+                    "shares": st.column_config.NumberColumn("shares", width="small", format="%g"),
+                    "price":  st.column_config.NumberColumn("price", width="small", format="%.2f"),
+                },
+            )
+
+        # Download sample file
+        portfolio_sample_csv = (
+            "date,ticker,action,shares,price\n"
+            "2024-01-15,,deposit,0,5000\n"
+            "2024-01-15,AAPL,buy,10,185.50\n"
+            "2024-01-15,MSFT,buy,5,375.20\n"
+            "2024-02-01,NVDA,buy,8,620.10\n"
+            "2024-02-10,AAPL,sell,3,192.30\n"
+            "2024-03-01,,deposit,0,2000\n"
+            "2024-03-15,META,buy,6,505.00\n"
+            "2024-04-01,AAPL,dividend,0,0.25\n"
+            "2024-04-10,NVDA,sell,2,850.00\n"
+        )
+        st.download_button(
+            label="⬇ Download sample portfolio CSV",
+            data=portfolio_sample_csv,
+            file_name="portfolio_transactions_example.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
         tx_file = st.file_uploader(
             "Transactions CSV",
             type=["csv"],
@@ -918,45 +1106,17 @@ elif st.session_state["page"] == "dashboard":
             )
             df_display = df_adj.loc[has_any_data].copy()
 
-        # ── CSS: wrap header text so long labels don't get truncated ──────
-        st.markdown(
-            """
-            <style>
-            [data-testid="stDataFrame"] th div[data-testid="column-header-cell-text"],
-            [data-testid="stDataFrame"] th span {
-                white-space: normal !important;
-                word-break: break-word !important;
-                line-height: 1.3 !important;
-            }
-            [data-testid="stDataFrame"] thead th {
-                vertical-align: top !important;
-                min-height: 56px !important;
-            }
-            [data-testid="stDataFrame"] td,
-            [data-testid="stDataFrame"] th {
-                padding: 4px 8px !important;
-                font-size: 13px !important;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
+        compact_columns = {
+            c: st.column_config.Column(c, width="small")
+            for c in df_display.columns
+        }
 
-        def _col_cfg(col):
-            col_lower = col.lower()
-            if col in ("Ticker", "Company", "Name"):
-                return st.column_config.TextColumn(col, width="small")
-            if any(k in col_lower for k in ("industry", "sector")):
-                return st.column_config.TextColumn(col, width="medium")
-            return st.column_config.TextColumn(col, width="small")
-
-        column_config = {c: _col_cfg(c) for c in df_display.columns}
-
-        st.dataframe(
+        st.data_editor(
             df_display,
-            column_config=column_config,
-            use_container_width=True,
-            height=620,
+            column_config=compact_columns,
+            disabled=True,
+            width="stretch",
+            height=600,
             hide_index=True,
         )
 
