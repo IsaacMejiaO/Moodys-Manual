@@ -201,6 +201,7 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
     balance_data = {}
     metadata = {}
     historical_data = {}
+    _capex_source = "yfinance"  # updated to "sec" if SEC backup provides capex
 
     # =========================================================
     # PRIMARY SOURCE: YFINANCE
@@ -240,10 +241,15 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
         # LTM DATA from yfinance (sum last 4 quarters)
         # -------------------------
         def get_ltm_from_quarterly(df, field_name):
-            """Get LTM value by summing last 4 quarters"""
+            """
+            Sum last 4 quarterly periods to produce LTM.
+            Returns NaN if fewer than 4 periods are available.
+            yfinance returns columns in reverse-chronological order,
+            so head(4) gives the 4 most recent periods.
+            """
             if df is None or df.empty or field_name not in df.index:
                 return np.nan
-            values = df.loc[field_name].head(4)
+            values = df.loc[field_name].dropna().head(4)
             if len(values) < 4:
                 return np.nan
             return float(values.sum())
@@ -270,6 +276,9 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
             "ocf": get_ltm_from_quarterly(quarterly_cashflow, "Operating Cash Flow"),
             "capex": get_ltm_from_quarterly(quarterly_cashflow, "Capital Expenditure"),
         }
+        # yfinance capex is a negative outflow — flag so aggregation.py
+        # knows to abs() it when normalizing sign
+        _capex_source = "yfinance"
 
         # Balance Sheet - Latest Quarter
         balance_data = {
@@ -345,54 +354,62 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
         try:
             facts = fetch_company_facts(cik)
 
-            def latest_value_sec(tags):
-                """Get latest value from SEC quarterly data"""
+            def ltm_value_sec(tags):
+                """Compute proper LTM from SEC quarterly data."""
+                from sec_engine.ltm import extract_quarterly_series, build_ltm
                 series = extract_quarterly_series(facts, tags)
-                if series.empty:
-                    return np.nan
-                return float(series.sort_index().iloc[-1])
+                return build_ltm(series)
+
+            def latest_balance_sec(tags):
+                """Get most recent balance sheet value from SEC quarterly data."""
+                from sec_engine.ltm import extract_quarterly_series, latest_balance
+                series = extract_quarterly_series(facts, tags)
+                return latest_balance(series)
 
             def annual_series_sec(tags):
-                """Get annual series from SEC"""
+                """Get annual series from SEC."""
+                from sec_engine.ltm import extract_annual_series
                 series = extract_annual_series(facts, tags)
                 return series if not series.empty else None
 
-            # Fill missing LTM data from SEC
+            # Fill missing LTM income/cashflow data from SEC using proper LTM sums
             sec_backup_ltm = {
-                "revenue": latest_value_sec(GAAP_MAP.get("revenue", [])),
-                "gross_profit": latest_value_sec(GAAP_MAP.get("gross_profit", [])),
-                "operating_income": latest_value_sec(GAAP_MAP.get("operating_income", [])),
-                "net_income": latest_value_sec(GAAP_MAP.get("net_income", [])),
-                "sga": latest_value_sec(GAAP_MAP.get("sga", [])),
-                "rd": latest_value_sec(GAAP_MAP.get("rd", [])),
-                "cogs": latest_value_sec(GAAP_MAP.get("cogs", [])),
-                "interest_expense": latest_value_sec(GAAP_MAP.get("interest_expense", [])),
-                "ocf": latest_value_sec(GAAP_MAP.get("ocf", [])),
-                "capex": latest_value_sec(GAAP_MAP.get("capex", [])),
-                "ebitda": latest_value_sec(GAAP_MAP.get("ebitda", [])),
-                "depreciation": latest_value_sec(GAAP_MAP.get("depreciation", [])),
+                "revenue":          ltm_value_sec(GAAP_MAP.get("revenue", [])),
+                "gross_profit":     ltm_value_sec(GAAP_MAP.get("gross_profit", [])),
+                "operating_income": ltm_value_sec(GAAP_MAP.get("operating_income", [])),
+                "net_income":       ltm_value_sec(GAAP_MAP.get("net_income", [])),
+                "sga":              ltm_value_sec(GAAP_MAP.get("sga", [])),
+                "rd":               ltm_value_sec(GAAP_MAP.get("rd", [])),
+                "cogs":             ltm_value_sec(GAAP_MAP.get("cogs", [])),
+                "interest_expense": ltm_value_sec(GAAP_MAP.get("interest_expense", [])),
+                "ocf":              ltm_value_sec(GAAP_MAP.get("ocf", [])),
+                "capex":            ltm_value_sec(GAAP_MAP.get("capex", [])),
+                "ebitda":           ltm_value_sec(GAAP_MAP.get("ebitda", [])),
+                "depreciation":     ltm_value_sec(GAAP_MAP.get("depreciation", [])),
             }
 
-            # Use SEC data only if yfinance data is missing
             for key, value in sec_backup_ltm.items():
                 if pd.isna(ltm_data.get(key, np.nan)) and not pd.isna(value):
                     ltm_data[key] = value
+                    # SEC capex tags are defined as positive outflows — no sign flip needed
+                    if key == "capex":
+                        _capex_source = "sec"
 
             # Fill missing balance sheet data from SEC
             sec_backup_balance = {
-                "total_assets": latest_value_sec(GAAP_MAP.get("total_assets", [])),
-                "current_assets": latest_value_sec(GAAP_MAP.get("current_assets", [])),
-                "cash": latest_value_sec(GAAP_MAP.get("cash", [])),
-                "accounts_receivable": latest_value_sec(GAAP_MAP.get("accounts_receivable", [])),
-                "inventory": latest_value_sec(GAAP_MAP.get("inventory", [])),
-                "ppe": latest_value_sec(GAAP_MAP.get("ppe", [])),
-                "total_liabilities": latest_value_sec(GAAP_MAP.get("total_liabilities", [])),
-                "current_liabilities": latest_value_sec(GAAP_MAP.get("current_liabilities", [])),
-                "accounts_payable": latest_value_sec(GAAP_MAP.get("accounts_payable", [])),
-                "long_term_debt": latest_value_sec(GAAP_MAP.get("long_term_debt", [])),
-                "debt": latest_value_sec(GAAP_MAP.get("debt", [])),
-                "equity": latest_value_sec(GAAP_MAP.get("equity", [])),
-                "retained_earnings": latest_value_sec(GAAP_MAP.get("retained_earnings", [])),
+                "total_assets":       latest_balance_sec(GAAP_MAP.get("total_assets", [])),
+                "current_assets":     latest_balance_sec(GAAP_MAP.get("current_assets", [])),
+                "cash":               latest_balance_sec(GAAP_MAP.get("cash", [])),
+                "accounts_receivable": latest_balance_sec(GAAP_MAP.get("accounts_receivable", [])),
+                "inventory":          latest_balance_sec(GAAP_MAP.get("inventory", [])),
+                "ppe":                latest_balance_sec(GAAP_MAP.get("ppe", [])),
+                "total_liabilities":  latest_balance_sec(GAAP_MAP.get("total_liabilities", [])),
+                "current_liabilities": latest_balance_sec(GAAP_MAP.get("current_liabilities", [])),
+                "accounts_payable":   latest_balance_sec(GAAP_MAP.get("accounts_payable", [])),
+                "long_term_debt":     latest_balance_sec(GAAP_MAP.get("long_term_debt", [])),
+                "debt":               latest_balance_sec(GAAP_MAP.get("debt", [])),
+                "equity":             latest_balance_sec(GAAP_MAP.get("equity", [])),
+                "retained_earnings":  latest_balance_sec(GAAP_MAP.get("retained_earnings", [])),
             }
 
             for key, value in sec_backup_balance.items():
@@ -401,17 +418,17 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
 
             # Fill missing historical data from SEC
             sec_historical_backup = {
-                "revenue_history": annual_series_sec(GAAP_MAP.get("revenue", [])),
-                "gross_profit_history": annual_series_sec(GAAP_MAP.get("gross_profit", [])),
-                "ebit_history": annual_series_sec(GAAP_MAP.get("operating_income", [])),
-                "ebitda_history": annual_series_sec(GAAP_MAP.get("ebitda", [])),
-                "net_income_history": annual_series_sec(GAAP_MAP.get("net_income", [])),
-                "ar_history": annual_series_sec(GAAP_MAP.get("accounts_receivable", [])),
-                "inventory_history": annual_series_sec(GAAP_MAP.get("inventory", [])),
-                "ppe_history": annual_series_sec(GAAP_MAP.get("ppe", [])),
-                "total_assets_history": annual_series_sec(GAAP_MAP.get("total_assets", [])),
+                "revenue_history":          annual_series_sec(GAAP_MAP.get("revenue", [])),
+                "gross_profit_history":     annual_series_sec(GAAP_MAP.get("gross_profit", [])),
+                "ebit_history":             annual_series_sec(GAAP_MAP.get("operating_income", [])),
+                "ebitda_history":           annual_series_sec(GAAP_MAP.get("ebitda", [])),
+                "net_income_history":       annual_series_sec(GAAP_MAP.get("net_income", [])),
+                "ar_history":              annual_series_sec(GAAP_MAP.get("accounts_receivable", [])),
+                "inventory_history":        annual_series_sec(GAAP_MAP.get("inventory", [])),
+                "ppe_history":              annual_series_sec(GAAP_MAP.get("ppe", [])),
+                "total_assets_history":     annual_series_sec(GAAP_MAP.get("total_assets", [])),
                 "total_liabilities_history": annual_series_sec(GAAP_MAP.get("total_liabilities", [])),
-                "equity_history": annual_series_sec(GAAP_MAP.get("equity", [])),
+                "equity_history":           annual_series_sec(GAAP_MAP.get("equity", [])),
             }
 
             for key, value in sec_historical_backup.items():
@@ -423,18 +440,27 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
                 ocf_sec = annual_series_sec(GAAP_MAP.get("ocf", []))
                 capex_sec = annual_series_sec(GAAP_MAP.get("capex", []))
                 if ocf_sec is not None and capex_sec is not None:
-                    combined = pd.concat([ocf_sec, capex_sec], axis=1, keys=['ocf', 'capex']).dropna()
+                    combined = pd.concat(
+                        [ocf_sec, capex_sec], axis=1, keys=["ocf", "capex"]
+                    ).dropna()
                     if not combined.empty:
-                        historical_data["lfcf_history"] = combined['ocf'] - combined['capex']
+                        historical_data["lfcf_history"] = (
+                            combined["ocf"] - combined["capex"]
+                        )
 
-        except Exception:
-            # If SEC also fails, continue with whatever data we have
-            pass
+        except Exception as exc:
+            # SEC fetch failed — log the error but continue with yfinance data.
+            # This is expected for foreign private issuers and non-EDGAR filers.
+            import logging
+            logging.getLogger(__name__).warning(
+                "SEC backup failed for %s (CIK %s): %s", ticker, cik, exc
+            )
 
     return {
         "ltm_data": ltm_data,
         "balance_data": balance_data,
         "metadata": metadata,
+        "capex_source": _capex_source,
         **historical_data
     }
 
@@ -488,6 +514,7 @@ def get_or_compute_summary(ticker: str):
         total_assets_history=data.get('total_assets_history'),
         total_liabilities_history=data.get('total_liabilities_history'),
         equity_history=data.get('equity_history'),
+        capex_from_yfinance=data.get("capex_source") == "yfinance",
     )
 
     # Cache it
@@ -521,8 +548,8 @@ def load_single_ticker_summary(ticker: str) -> dict:
         try:
             submissions = fetch_company_submissions(cik)
             sic_code = submissions.get('sic', '')
-        except:
-            pass
+        except Exception:
+            pass  # SIC failure is non-fatal; peer-grouping will just be skipped
 
         # Use unified data fetcher (cached)
         data = fetch_company_data_unified(ticker, cik)
@@ -546,6 +573,8 @@ def load_single_ticker_summary(ticker: str) -> dict:
             total_assets_history=data.get("total_assets_history"),
             total_liabilities_history=data.get("total_liabilities_history"),
             equity_history=data.get("equity_history"),
+            # yfinance is the primary source for capex; sign normalization needed
+            capex_from_yfinance=data.get("capex_source") == "yfinance",
         )
 
         return {"summary": summary, "sic": sic_code, "ticker": ticker}
@@ -661,11 +690,9 @@ if needs_reload:
     st.session_state["ticker_data_cache"] = {}
     st.session_state["ticker_summary_cache"] = {}
 
-    # Show estimated time for large universes
-    if len(universe) > 50:
-        st.info(f"📊 Loading {len(universe)} tickers... This may take 1-2 minutes. Using parallel loading for speed.")
-
-    df, error_df, sic_map = load_data_with_progress_parallel(universe, max_workers=20)
+    # max_workers=8 keeps concurrent SEC requests within EDGAR's 10 req/s limit.
+    # The semaphore in sec_fetch.py provides a second guard.
+    df, error_df, sic_map = load_data_with_progress_parallel(universe, max_workers=8)
 
     st.session_state["loaded_universe_key"] = cache_key
     st.session_state["loaded_df"] = df
@@ -911,6 +938,7 @@ elif st.session_state["page"] == "dashboard":
 
         # ── Remove unwanted columns ───────────────────────────────────────────
         columns_to_remove = [
+            "Data As Of",   # freshness field — shown in tearsheet, not screener
             "ROA %", "ROE %", "RCE %", "SG&A Margin %", "R&D Margin %",
             "LFCF Margin %", "UFCF Margin %", "CapEx % Revenue",
             "Total Asset Turnover", "AR Turnover", "Inventory Turnover",
