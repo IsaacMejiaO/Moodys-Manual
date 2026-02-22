@@ -936,10 +936,34 @@ if st.session_state["page"] == "data_controls":
               </div>
               <div class="note-text">
                 • <strong style="color:#e0e0f0;">date</strong> — any standard format (e.g. 2024-01-15 or 1/15/2024)<br>
-                • <strong style="color:#e0e0f0;">ticker</strong> — leave blank for cash deposits / withdrawals<br>
-                • <strong style="color:#e0e0f0;">action</strong> — one of: <em>buy · sell · deposit · dividend</em><br>
-                • <strong style="color:#e0e0f0;">shares</strong> — number of shares (use 0 for deposits)<br>
-                • <strong style="color:#e0e0f0;">price</strong> — price per share, or cash amount for deposits
+                • <strong style="color:#e0e0f0;">ticker</strong> — leave blank for <em>deposit</em> and <em>withdrawal</em> rows<br>
+                • <strong style="color:#e0e0f0;">action</strong> — one of five values:
+              </div>
+              <table style="margin:6px 0 4px 12px;border-collapse:collapse;font-size:11.5px;color:#ccc;width:calc(100% - 12px);">
+                <tr>
+                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">buy</td>
+                  <td style="padding:3px 0;color:#999;">Purchase shares — subtracts cash, adds shares to holdings</td>
+                </tr>
+                <tr>
+                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">sell</td>
+                  <td style="padding:3px 0;color:#999;">Sell shares — adds cash proceeds, reduces holdings</td>
+                </tr>
+                <tr>
+                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">deposit</td>
+                  <td style="padding:3px 0;color:#999;">Cash added to the account — counted as money invested (XIRR outflow)</td>
+                </tr>
+                <tr>
+                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">withdrawal</td>
+                  <td style="padding:3px 0;color:#999;">Cash taken out — reduces net invested, treated as XIRR inflow</td>
+                </tr>
+                <tr>
+                  <td style="padding:3px 10px 3px 0;color:#7ec8ff;font-weight:700;white-space:nowrap;">dividend</td>
+                  <td style="padding:3px 0;color:#999;">Cash dividend received — adds cash, does not affect share count</td>
+                </tr>
+              </table>
+              <div class="note-text">
+                • <strong style="color:#e0e0f0;">shares</strong> — number of shares traded; use <strong style="color:#e0e0f0;">0</strong> for deposit, withdrawal &amp; dividend rows<br>
+                • <strong style="color:#e0e0f0;">price</strong> — price per share for buy/sell; cash amount for deposit, withdrawal &amp; dividend
               </div>
             </div>
             """,
@@ -950,15 +974,15 @@ if st.session_state["page"] == "data_controls":
         with st.expander("▶ View example layout", expanded=False):
             st.dataframe(
                 pd.DataFrame({
-                    "date":   ["2024-01-15", "2024-01-15", "2024-02-01", "2024-02-10", "2024-03-01", "2024-03-15"],
-                    "ticker": ["",           "AAPL",       "MSFT",       "AAPL",       "NVDA",        ""],
-                    "action": ["deposit",    "buy",        "buy",        "sell",       "buy",         "deposit"],
-                    "shares": [0,            10,           5,            3,            8,             0],
-                    "price":  [5000,         185.50,       375.20,       192.30,       620.10,        1000],
+                    "date":   ["2024-01-15", "2024-01-15", "2024-02-01", "2024-02-10", "2024-03-01", "2024-03-15", "2024-04-01", "2024-04-10"],
+                    "ticker": ["",           "AAPL",       "MSFT",       "AAPL",       "NVDA",        "",           "AAPL",       ""],
+                    "action": ["deposit",    "buy",        "buy",        "sell",       "buy",         "deposit",    "dividend",   "withdrawal"],
+                    "shares": [0,            10,           5,            3,            8,             0,            0,            0],
+                    "price":  [5000,         185.50,       375.20,       192.30,       620.10,        1000,         0.25,         2500],
                 }),
                 hide_index=True,
                 use_container_width=True,
-                height=245,
+                height=315,
                 column_config={
                     "date":   st.column_config.TextColumn("date", width="medium"),
                     "ticker": st.column_config.TextColumn("ticker", width="small"),
@@ -980,6 +1004,7 @@ if st.session_state["page"] == "data_controls":
             "2024-03-15,META,buy,6,505.00\n"
             "2024-04-01,AAPL,dividend,0,0.25\n"
             "2024-04-10,NVDA,sell,2,850.00\n"
+            "2024-05-01,,withdrawal,0,2500\n"
         )
         st.download_button(
             label="⬇ Download sample portfolio CSV",
