@@ -768,7 +768,7 @@ if st.session_state["page"] == "data_controls":
     with col_left:
         st.markdown("### Screener Data")
 
-        with st.expander("Example layout", expanded=True):
+        with st.expander("Example layout", expanded=False):
             st.dataframe(
                 pd.DataFrame({
                     "ticker":  ["AAPL", "MSFT", "NVDA", "GOOGL", "META"],
@@ -836,7 +836,7 @@ if st.session_state["page"] == "data_controls":
     with col_right:
         st.markdown("### Portfolio Controls")
 
-        with st.expander("Example layout", expanded=True):
+        with st.expander("Example layout", expanded=False):
             st.dataframe(
                 pd.DataFrame({
                     "date":   ["2024-01-15", "2024-01-15", "2024-02-01", "2024-02-10", "2024-03-01", "2024-03-15", "2024-04-01", "2024-04-10"],
@@ -861,7 +861,7 @@ if st.session_state["page"] == "data_controls":
 
         tx_file = st.file_uploader(
             "Transactions CSV",
-            type=["csv"],
+            type=["csv", "xlsx"],
             key="data_controls_transactions_file",
             label_visibility="collapsed",
         )
@@ -886,10 +886,21 @@ if st.session_state["page"] == "data_controls":
                 if tx_file is None:
                     st.warning("Upload a file first.")
                 else:
-                    if load_transactions_from_csv(tx_file):
-                        st.success("Portfolio transactions loaded.")
+                    if tx_file.name.endswith(".xlsx"):
+                        import io
+                        df_tx = pd.read_excel(tx_file)
+                        csv_buffer = io.StringIO()
+                        df_tx.to_csv(csv_buffer, index=False)
+                        csv_buffer.seek(0)
+                        if load_transactions_from_csv(csv_buffer):
+                            st.success("Portfolio transactions loaded.")
+                        else:
+                            st.error("Could not parse the file.")
                     else:
-                        st.error("Could not parse the file.")
+                        if load_transactions_from_csv(tx_file):
+                            st.success("Portfolio transactions loaded.")
+                        else:
+                            st.error("Could not parse the file.")
         with btn_col5:
             if st.button("Go to Performance →", key="go_to_performance", use_container_width=True):
                 st.session_state["page"] = "performance"
