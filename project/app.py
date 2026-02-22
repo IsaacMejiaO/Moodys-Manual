@@ -1003,17 +1003,6 @@ elif st.session_state["page"] == "dashboard":
             df_display = df_adj.dropna(how="all").copy()
 
         # ── Column config: proper formatters + autofit widths ─────────────────
-        # Width is driven by header character length so every column is as
-        # narrow as its label allows, keeping the table dense.
-        def _autofit_width(col: str) -> str:
-            n = len(col)
-            if n <= 6:
-                return "small"
-            elif n <= 14:
-                return "medium"
-            else:
-                return "large"
-
         # Columns displayed as percentage (values are already in % units, e.g. 45.2)
         pct_cols = {
             "Gross Margin %", "EBIT Margin %", "EBITDA Margin %",
@@ -1024,36 +1013,35 @@ elif st.session_state["page"] == "dashboard":
         ratio_cols = {"PEG (PE LTM)", "PEG (Lynch)", "PE LTM"}
         # Market cap: large integer formatted with commas
         mktcap_cols = {"Market Cap (M)"}
-        # Text identity columns
-        text_cols = {"Ticker", "Company", "Name", "Industry"}
+
+        # Pre-round Market Cap so it displays cleanly as an integer string
+        if "Market Cap (M)" in df_display.columns:
+            df_display["Market Cap (M)"] = df_display["Market Cap (M)"].apply(
+                lambda x: f"{x:,.0f}" if pd.notna(x) else ""
+            )
 
         column_config = {}
         for col in df_display.columns:
-            w = _autofit_width(col)
-            if col in text_cols:
-                # Text: fixed widths for readability
-                if col == "Ticker":
-                    column_config[col] = st.column_config.TextColumn(col, width="small")
-                elif col in ("Company", "Name"):
-                    column_config[col] = st.column_config.TextColumn(col, width="medium")
-                else:
-                    column_config[col] = st.column_config.TextColumn(col, width="medium")
+            if col == "Ticker":
+                column_config[col] = st.column_config.TextColumn(col, width="small")
+            elif col in ("Company", "Name"):
+                column_config[col] = st.column_config.TextColumn(col, width="medium")
+            elif col == "Industry":
+                column_config[col] = st.column_config.TextColumn(col, width="medium")
             elif col in mktcap_cols:
-                column_config[col] = st.column_config.NumberColumn(
-                    col, format="%,.0f", width=w
-                )
+                # Already converted to formatted string above
+                column_config[col] = st.column_config.TextColumn(col, width="small")
             elif col in pct_cols:
                 column_config[col] = st.column_config.NumberColumn(
-                    col, format="%.1f%%", width=w
+                    col, format="%.1f%%", width="small"
                 )
             elif col in ratio_cols:
                 column_config[col] = st.column_config.NumberColumn(
-                    col, format="%.2f", width=w
+                    col, format="%.2f", width="small"
                 )
             else:
-                # Default numeric: one decimal
                 column_config[col] = st.column_config.NumberColumn(
-                    col, format="%.1f", width=w
+                    col, format="%.1f", width="small"
                 )
 
         st.dataframe(
