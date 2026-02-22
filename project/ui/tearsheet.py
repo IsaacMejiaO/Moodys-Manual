@@ -14,6 +14,7 @@ from sec_engine.sec_fetch import fetch_company_facts
 from sec_engine.normalize import GAAP_MAP
 from sec_engine.ltm import extract_annual_series, extract_quarterly_series
 from sec_engine.peer_finder import find_peers_by_sic
+from sec_engine.capital_iq_style_peer_finder import find_best_peers_automated
 
 # ── Design tokens (matches performance.py, ratios.py, multiples.py) ───────────
 UP      = "#00C805"
@@ -482,13 +483,79 @@ def render_tearsheet(ticker: str):
     q_balance   = get_yf_quarterly_balance(ticker)
     q_cashflow  = get_yf_quarterly_cashflow(ticker)
 
-    # Get peers
+    # ── Peer Finding — mirrors Multiples page logic ───────────────────────────
+    # Use the same Capital IQ-style automated finder (with SIC fallback) that
+    # the Multiples page uses.  We request up to 12 candidates so we have
+    # enough runway to select the best 4 that actually have data for each
+    # specific metric in each tab.
     sic_map    = st.session_state.get("sic_map", {})
     company_df = st.session_state.get("company_df", pd.DataFrame())
+    uploaded_universe = st.session_state.get("uploaded_universe", None)
 
-    PEER_UNIVERSE = []
-    if sic_map and not company_df.empty:
-        PEER_UNIVERSE = find_peers_by_sic(ticker, sic_map, company_df, min_peers=3, max_peers=4)
+    with st.spinner("Finding comparable companies…"):
+        try:
+            _peer_candidates = find_best_peers_automated(
+                ticker=ticker,
+                uploaded_universe=uploaded_universe,
+                max_peers=12,
+            )
+        except Exception:
+            _peer_candidates = []
+
+        # SIC fallback — mirrors multiples.py exactly
+        if not _peer_candidates and sic_map and not company_df.empty:
+            _peer_candidates = find_peers_by_sic(
+                ticker, sic_map, company_df, min_peers=4, max_peers=12
+            )
+
+    # Cache raw peer financials once so every tab reuses the same data
+    # without re-fetching.  Keyed by ticker string.
+    _peer_fin_cache     = {}
+    _peer_balance_cache = {}
+    _peer_cf_cache      = {}
+
+    def _load_peer_data(peer: str):
+        """Lazy-load and cache yfinance statements for a peer."""
+        if peer not in _peer_fin_cache:
+            _peer_fin_cache[peer]     = get_yf_financials(peer)
+            _peer_balance_cache[peer] = get_yf_balance_sheet(peer)
+            _peer_cf_cache[peer]      = get_yf_cashflow(peer)
+
+    def _best_peers_for_metric(yf_label: str, source: str = "fin", max_peers: int = 4):
+        """
+        Return (labels, values) for the best ≤ max_peers peers that have
+        a valid (non-NaN) value for `yf_label`.
+
+        Peers are evaluated in the order returned by find_best_peers_automated
+        (highest-quality first), so the first max_peers with data are kept —
+        exactly mirroring how the Multiples page filters its peer bar chart.
+
+        source: "fin" → income statement, "balance" → balance sheet,
+                "cf"  → cash flow statement.
+        """
+        labels, values = [], []
+        for peer in _peer_candidates:
+            if len(labels) >= max_peers:
+                break
+            try:
+                _load_peer_data(peer)
+                if source == "fin":
+                    df = _peer_fin_cache[peer]
+                elif source == "balance":
+                    df = _peer_balance_cache[peer]
+                else:
+                    df = _peer_cf_cache[peer]
+                val = get_latest_value(df, yf_label)
+                if is_valid_number(val):
+                    labels.append(peer)
+                    values.append(val)
+            except Exception:
+                continue
+        return labels, values
+
+    # Keep a flat list for sector-median computation (uses all candidates that
+    # have data, not just the best 4).
+    PEER_UNIVERSE = _peer_candidates
 
     # Get all years
     all_years      = get_all_years_from_dfs([yf_fin, yf_balance, yf_cashflow])
@@ -710,15 +777,7 @@ def render_tearsheet(ticker: str):
             values         = [get_value_by_year(yf_fin, yf_label,         y) for y in non_peer_years]
             compare_values = [get_value_by_year(yf_fin, yf_label_compare, y) for y in non_peer_years]
 
-            peer_values, peer_labels = [], []
-            for peer in PEER_UNIVERSE:
-                try:
-                    peer_fin = get_yf_financials(peer)
-                    val = get_latest_value(peer_fin, yf_label)
-                    peer_values.append(val); peer_labels.append(peer)
-                except Exception:
-                    continue
-
+            peer_labels, peer_values = _best_peers_for_metric(yf_label, source="fin")
             industry_median = median_ignore_nan(peer_values)
             sector_median   = compute_sector_median(peer_labels, peer_values, target_sector)
 
@@ -755,8 +814,6 @@ def render_tearsheet(ticker: str):
                 py_title, py_div = format_yaxis_currency(pvt)
                 spv = [v / py_div if not pd.isna(v) else np.nan for v in pvt]
                 _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
-
-    # TAB 2: Balance Sheet
     with tab2:
         bs_options = ["Cash and Short-term Investments", "Current Asset", "Short-term Debt", "Current Liabilities", "Long-term Debt", "Total Liabilities", "Total Equity", "Net Debt"]
         col_a, col_b = st.columns(2)
@@ -779,15 +836,7 @@ def render_tearsheet(ticker: str):
             bs_values         = [get_value_by_year(yf_balance, yf_bs_label,         y) for y in non_peer_years]
             compare_bs_values = [get_value_by_year(yf_balance, yf_bs_label_compare, y) for y in non_peer_years]
 
-            peer_bs_values, peer_bs_labels = [], []
-            for peer in PEER_UNIVERSE:
-                try:
-                    peer_balance = get_yf_balance_sheet(peer)
-                    val = get_latest_value(peer_balance, yf_bs_label)
-                    peer_bs_values.append(val); peer_bs_labels.append(peer)
-                except Exception:
-                    continue
-
+            peer_bs_labels, peer_bs_values = _best_peers_for_metric(yf_bs_label, source="balance")
             industry_median = median_ignore_nan(peer_bs_values)
             sector_median   = compute_sector_median(peer_bs_labels, peer_bs_values, target_sector)
 
@@ -845,15 +894,7 @@ def render_tearsheet(ticker: str):
             cf_values         = [get_value_by_year(yf_cashflow, yf_cf_label,         y) for y in non_peer_years]
             compare_cf_values = [get_value_by_year(yf_cashflow, yf_cf_label_compare, y) for y in non_peer_years]
 
-            peer_cf_values, peer_cf_labels = [], []
-            for peer in PEER_UNIVERSE:
-                try:
-                    peer_cashflow = get_yf_cashflow(peer)
-                    val = get_latest_value(peer_cashflow, yf_cf_label)
-                    peer_cf_values.append(val); peer_cf_labels.append(peer)
-                except Exception:
-                    continue
-
+            peer_cf_labels, peer_cf_values = _best_peers_for_metric(yf_cf_label, source="cf")
             industry_median = median_ignore_nan(peer_cf_values)
             sector_median   = compute_sector_median(peer_cf_labels, peer_cf_values, target_sector)
 
@@ -929,10 +970,14 @@ def render_tearsheet(ticker: str):
                 margin_values.append(_m(selected_margin,         *args))
                 compare_margin_values.append(_m(selected_margin_compare, *args))
 
-            peer_margin_values, peer_margin_labels = [], []
-            for peer in PEER_UNIVERSE:
+            peer_margin_labels, peer_margin_values = [], []
+            for peer in _peer_candidates:
+                if len(peer_margin_labels) >= 4:
+                    break
                 try:
-                    pf = get_yf_financials(peer); pb = get_yf_balance_sheet(peer)
+                    _load_peer_data(peer)
+                    pf = _peer_fin_cache[peer]
+                    pb = _peer_balance_cache[peer]
                     rev    = get_latest_value(pf, "Total Revenue")
                     gp     = get_latest_value(pf, "Gross Profit")
                     ebitda = get_latest_value(pf, "EBITDA")
@@ -954,7 +999,9 @@ def render_tearsheet(ticker: str):
                     }
                     raw = lookup.get(selected_margin, np.nan)
                     val = raw * 100 if is_valid_number(raw) else np.nan
-                    peer_margin_values.append(val); peer_margin_labels.append(peer)
+                    if is_valid_number(val):
+                        peer_margin_labels.append(peer)
+                        peer_margin_values.append(val)
                 except Exception:
                     continue
 
