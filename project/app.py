@@ -1000,6 +1000,14 @@ elif st.session_state["page"] == "dashboard":
         else:
             df_display = df_adj.dropna(how="all").copy()
 
+        # ── Force numeric dtype on all metric columns ─────────────────────────
+        # Streamlit sorts by dtype — object columns sort lexicographically even
+        # when the values look like numbers. Explicitly casting to float64 ensures
+        # ascending/descending sort works correctly for every metric column.
+        for col in metric_cols:
+            if col in df_display.columns and col not in ("Market Cap (M)",):
+                df_display[col] = pd.to_numeric(df_display[col], errors="coerce")
+
         # ── Column config: proper formatters + autofit widths ─────────────────
         # Columns displayed as percentage (values are already in % units, e.g. 45.2)
         pct_cols = {
@@ -1012,11 +1020,9 @@ elif st.session_state["page"] == "dashboard":
         # Market cap: large integer formatted with commas
         mktcap_cols = {"Market Cap (M)"}
 
-        # Pre-round Market Cap so it displays cleanly as an integer string
+        # Force Market Cap to numeric too (needed for sort)
         if "Market Cap (M)" in df_display.columns:
-            df_display["Market Cap (M)"] = df_display["Market Cap (M)"].apply(
-                lambda x: f"{x:,.0f}" if pd.notna(x) else ""
-            )
+            df_display["Market Cap (M)"] = pd.to_numeric(df_display["Market Cap (M)"], errors="coerce")
 
         column_config = {}
         for col in df_display.columns:
@@ -1027,8 +1033,9 @@ elif st.session_state["page"] == "dashboard":
             elif col == "Industry":
                 column_config[col] = st.column_config.TextColumn(col, width="medium")
             elif col in mktcap_cols:
-                # Already converted to formatted string above
-                column_config[col] = st.column_config.TextColumn(col, width="small")
+                column_config[col] = st.column_config.NumberColumn(
+                    col, format="%.0f", width="small"
+                )
             elif col in pct_cols:
                 column_config[col] = st.column_config.NumberColumn(
                     col, format="%.1f%%", width="small"
