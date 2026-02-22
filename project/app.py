@@ -665,10 +665,6 @@ if needs_reload:
     st.session_state["ticker_data_cache"] = {}
     st.session_state["ticker_summary_cache"] = {}
 
-    # Show estimated time for large universes
-    if len(universe) > 50:
-        st.info(f"📊 Loading {len(universe)} tickers... This may take 1-2 minutes. Using parallel loading for speed.")
-
     # Use parallel loading if enabled and universe is large
     if use_parallel and len(universe) > 10:
         df, error_df, sic_map = load_data_with_progress_parallel(universe, max_workers=20)
@@ -922,17 +918,45 @@ elif st.session_state["page"] == "dashboard":
             )
             df_display = df_adj.loc[has_any_data].copy()
 
-        compact_columns = {
-            c: st.column_config.Column(c, width="small")
-            for c in df_display.columns
-        }
+        # ── CSS: wrap header text so long labels don't get truncated ──────
+        st.markdown(
+            """
+            <style>
+            [data-testid="stDataFrame"] th div[data-testid="column-header-cell-text"],
+            [data-testid="stDataFrame"] th span {
+                white-space: normal !important;
+                word-break: break-word !important;
+                line-height: 1.3 !important;
+            }
+            [data-testid="stDataFrame"] thead th {
+                vertical-align: top !important;
+                min-height: 56px !important;
+            }
+            [data-testid="stDataFrame"] td,
+            [data-testid="stDataFrame"] th {
+                padding: 4px 8px !important;
+                font-size: 13px !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        st.data_editor(
+        def _col_cfg(col):
+            col_lower = col.lower()
+            if col in ("Ticker", "Company", "Name"):
+                return st.column_config.TextColumn(col, width="small")
+            if any(k in col_lower for k in ("industry", "sector")):
+                return st.column_config.TextColumn(col, width="medium")
+            return st.column_config.TextColumn(col, width="small")
+
+        column_config = {c: _col_cfg(c) for c in df_display.columns}
+
+        st.dataframe(
             df_display,
-            column_config=compact_columns,
-            disabled=True,
-            width="stretch",
-            height=600,
+            column_config=column_config,
+            use_container_width=True,
+            height=620,
             hide_index=True,
         )
 
