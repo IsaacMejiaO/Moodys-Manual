@@ -154,7 +154,7 @@ def net_debt_to_interest(net_debt, interest_expense):
     """Net Debt / Interest Expense"""
     return safe_divide(net_debt, abs(interest_expense))
 
-def altman_z_score(working_capital, total_assets, retained_earnings, ebit, equity, total_liabilities, revenue):
+def altman_z_score(working_capital, total_assets, retained_earnings, ebit, market_value_equity, total_liabilities, revenue):
     """
     Altman Z-Score for public companies:
     Z = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 + 1.0*X5
@@ -162,13 +162,13 @@ def altman_z_score(working_capital, total_assets, retained_earnings, ebit, equit
     X1 = Working Capital / Total Assets
     X2 = Retained Earnings / Total Assets
     X3 = EBIT / Total Assets
-    X4 = Market Value of Equity / Total Liabilities
+    X4 = Market Value of Equity / Total Liabilities  ← market cap, NOT book equity
     X5 = Sales / Total Assets
     """
     x1 = safe_divide(working_capital, total_assets, 0)
     x2 = safe_divide(retained_earnings, total_assets, 0)
     x3 = safe_divide(ebit, total_assets, 0)
-    x4 = safe_divide(equity, total_liabilities, 0)
+    x4 = safe_divide(market_value_equity, total_liabilities, 0)
     x5 = safe_divide(revenue, total_assets, 0)
     
     z_score = 1.2*x1 + 1.4*x2 + 3.3*x3 + 0.6*x4 + 1.0*x5
@@ -246,4 +246,5 @@ def fcf(ocf, capex):
     return ocf - capex
 
 def fcf_yield(fcf_value, market_cap):
+
     return safe_divide(fcf_value, market_cap) * 100
