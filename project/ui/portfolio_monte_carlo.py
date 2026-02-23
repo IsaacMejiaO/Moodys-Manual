@@ -482,7 +482,7 @@ def render_portfolio_monte_carlo():
         unsafe_allow_html=True,
     )
 
-    cfg_left, cfg_right = st.columns([1.1, 0.9], gap="large")
+    cfg_left, cfg_right = st.columns([1, 1], gap="large")
 
     # ── Column 1: Holdings + Risk & horizon ──────────────────────────────────
     with cfg_left:
@@ -570,15 +570,9 @@ def render_portfolio_monte_carlo():
             )
 
     # ── Run button ────────────────────────────────────────────────────────────
-    st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
     _, btn_col, _ = st.columns([2, 1, 2])
     with btn_col:
         run_button = st.button("Run Optimization", type="primary", use_container_width=True)
-
-    st.markdown(
-        f'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:18px 0 4px 0;">',
-        unsafe_allow_html=True,
-    )
 
     if not assets:
         st.warning("Add at least one stock ticker on the left to get started.")
@@ -779,8 +773,6 @@ def render_portfolio_monte_carlo():
         st.markdown(_metric_card("CVaR (5%)", f"{port_cvar*100:.1f}%",
             DOWN if port_cvar > 0.03 else ORANGE, tooltip="Expected daily loss in the worst 5% of days."), unsafe_allow_html=True)
 
-    _divider()
-
     # ── Tabs ─────────────────────────────────────────────────────────────────
     tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Volatility"])
 
@@ -802,7 +794,6 @@ def render_portfolio_monte_carlo():
                 width="stretch",
             )
 
-        _divider()
         s_label, s_color = _sharpe_verdict(sharpe)
         v_label, v_color = _vol_verdict(port_vol_val)
         ca, cb = st.columns(2)
@@ -827,7 +818,6 @@ def render_portfolio_monte_carlo():
             width="stretch",
         )
 
-        _divider()
         col_cdar, col_cvar = st.columns(2)
         with col_cdar:
             cdar_color = DOWN if port_cdar > 0.15 else ORANGE
@@ -856,7 +846,6 @@ def render_portfolio_monte_carlo():
         st.plotly_chart(fig_cum, width="stretch")
 
         if spy_returns is not None:
-            _divider()
             excess    = port_series.mean() * 252 - spy_returns.mean() * 252
             exc_color = UP if excess >= 0 else DOWN
             st.markdown(_verdict_card(
