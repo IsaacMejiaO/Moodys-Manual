@@ -438,99 +438,157 @@ def render_portfolio_monte_carlo():
     )
 
     # ── Configuration panel ───────────────────────────────────────────────────
-    with st.expander("Configure & Run Optimizer", expanded=True):
+    st.markdown(f"""
+    <style>
+    /* Config panel field labels */
+    .config-label {{
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(255,255,255,0.45);
+        margin: 0 0 5px 0;
+        line-height: 1;
+    }}
+    .config-hint {{
+        font-size: 12px;
+        color: rgba(255,255,255,0.38);
+        margin: 3px 0 14px 0;
+        line-height: 1.4;
+    }}
+    .config-divider {{
+        border: none;
+        border-top: 1px solid rgba(255,255,255,0.07);
+        margin: 18px 0;
+    }}
+    /* Slim down Streamlit number inputs and text areas inside config */
+    div[data-testid="stTextArea"] textarea {{
+        font-size: 13px !important;
+        line-height: 1.6 !important;
+    }}
+    div[data-testid="stTextInput"] input {{
+        font-size: 13px !important;
+    }}
+    div[data-testid="stSlider"] label p {{
+        font-size: 13px !important;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
 
-        # Row 1: Holdings | Settings
-        col_holdings, col_settings = st.columns([1, 1], gap="large")
+    # Section header — outside expander, always visible
+    st.markdown(
+        '<p style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.5);'
+        'letter-spacing:0.06em;text-transform:uppercase;margin:8px 0 10px 0;">Configure</p>',
+        unsafe_allow_html=True,
+    )
 
-        with col_holdings:
-            st.markdown(
-                '<p style="font-size:12px;font-weight:600;letter-spacing:0.06em;'
-                'text-transform:uppercase;color:#ffffff;margin:0 0 6px 0;">Holdings</p>',
-                unsafe_allow_html=True,
-            )
-            if "portfolio_stocks_input" not in st.session_state:
-                st.session_state["portfolio_stocks_input"] = "ASML\nCVX\nGOOGL\nMSFT\nSTRL\nTSM"
-            stocks_input = st.text_area(
-                "Equities — one ticker per line",
-                key="portfolio_stocks_input",
-                height=180,
-                label_visibility="collapsed",
-                placeholder="AAPL\nMSFT\nNVDA\n...",
-            )
-            bonds_input = st.text_input(
-                "Defensive / Bond ticker",
-                value="VGIT",
-                help="Leave blank to run an equity-only portfolio.",
-            )
+    cfg_left, cfg_mid, cfg_right = st.columns([1.1, 1, 0.9], gap="large")
 
-        with col_settings:
-            st.markdown(
-                '<p style="font-size:12px;font-weight:600;letter-spacing:0.06em;'
-                'text-transform:uppercase;color:#ffffff;margin:0 0 6px 0;">Settings</p>',
-                unsafe_allow_html=True,
-            )
-            risk_appetite = st.slider(
-                "Risk Appetite",
-                0.0, 1.0, 0.75, 0.05,
-                help="Moves the selected portfolio along the efficient frontier. "
-                     "0 = maximum bonds, 1 = 100% equity.",
-            )
-            st.caption("0 = Conservative (bonds only)  ·  1 = Aggressive (equity only)")
+    # ── Column 1: Your stocks ─────────────────────────────────────────────────
+    with cfg_left:
+        st.markdown('<p class="config-label">Your stocks</p>', unsafe_allow_html=True)
+        if "portfolio_stocks_input" not in st.session_state:
+            st.session_state["portfolio_stocks_input"] = "ASML\nCVX\nGOOGL\nMSFT\nSTRL\nTSM"
+        stocks_input = st.text_area(
+            "stocks",
+            key="portfolio_stocks_input",
+            height=158,
+            label_visibility="collapsed",
+            placeholder="AAPL\nMSFT\nNVDA\nAMZN\n...",
+        )
+        st.markdown('<p class="config-hint">One ticker per line</p>', unsafe_allow_html=True)
 
-            col_a, col_b = st.columns(2)
-            with col_a:
-                years_back = st.number_input(
-                    "Look-back (years)",
-                    min_value=5, max_value=30, value=25, step=1,
-                    help="How many years of historical price data to use for covariance estimation.",
-                )
-            with col_b:
-                mc_sims = st.number_input(
-                    "MC Simulations",
-                    min_value=500, max_value=10000, value=3000, step=500,
-                    help="Number of random portfolios plotted on the efficient frontier.",
-                )
+        st.markdown('<p class="config-label">Bond / defensive</p>', unsafe_allow_html=True)
+        bonds_input = st.text_input(
+            "bond",
+            value="VGIT",
+            label_visibility="collapsed",
+            placeholder="VGIT",
+        )
+        st.markdown('<p class="config-hint">Leave blank for equity-only</p>', unsafe_allow_html=True)
 
-        # Derive tickers here so Expected Returns section can use them
+    # ── Column 2: Risk & horizon ──────────────────────────────────────────────
+    with cfg_mid:
+        st.markdown('<p class="config-label">Risk appetite</p>', unsafe_allow_html=True)
+        risk_appetite = st.slider(
+            "risk",
+            min_value=0.0, max_value=1.0, value=0.75, step=0.05,
+            label_visibility="collapsed",
+        )
+        # Human-readable risk label
+        risk_pct = int(risk_appetite * 100)
+        risk_label = (
+            "Very conservative" if risk_pct <= 20 else
+            "Conservative"      if risk_pct <= 40 else
+            "Balanced"          if risk_pct <= 60 else
+            "Growth"            if risk_pct <= 80 else
+            "Aggressive"
+        )
+        st.markdown(
+            f'<p class="config-hint" style="margin-top:-6px;">'
+            f'{risk_label} &nbsp;·&nbsp; {risk_pct}% equity / {100-risk_pct}% bonds</p>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<p class="config-label" style="margin-top:10px;">Historical data</p>', unsafe_allow_html=True)
+        years_back = st.slider(
+            "years",
+            min_value=5, max_value=30, value=25, step=1,
+            label_visibility="collapsed",
+        )
+        st.markdown(
+            f'<p class="config-hint" style="margin-top:-6px;">'
+            f'{years_back} years of price history</p>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Column 3: Expected returns per asset ─────────────────────────────────
+    with cfg_right:
         stocks = [s.strip().upper() for s in stocks_input.split("\n") if s.strip()]
         bonds  = [bonds_input.strip().upper()] if bonds_input.strip() else []
         assets = stocks + bonds
+        mc_sims = 3000  # fixed — no need to expose this to non-technical users
 
-        # Row 2: Expected Returns (one compact number input per asset, full width)
+        st.markdown('<p class="config-label">Expected returns</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="config-hint">Annual return you expect per position</p>',
+            unsafe_allow_html=True,
+        )
+        dcf_returns = {}
         if assets:
+            for asset in assets:
+                default_val = 0.12 if asset in stocks else 0.03
+                dcf_returns[asset] = st.number_input(
+                    asset,
+                    min_value=0.0, max_value=1.0,
+                    value=default_val, step=0.01,
+                    format="%.2f",
+                    key=f"dcf_{asset}",
+                )
+        else:
             st.markdown(
-                '<p style="font-size:12px;font-weight:600;letter-spacing:0.06em;'
-                'text-transform:uppercase;color:#ffffff;margin:16px 0 6px 0;">Expected Annual Returns</p>'
-                '<p style="font-size:12px;color:#ffffff;opacity:0.6;margin:0 0 10px 0;">'
-                'Override the model\'s return assumption for each position (e.g. 0.12 = 12%).</p>',
+                '<p style="font-size:13px;color:rgba(255,255,255,0.3);margin-top:8px;">'
+                'Add tickers on the left to set expected returns.</p>',
                 unsafe_allow_html=True,
             )
-            dcf_returns = {}
-            n_cols = min(len(assets), 6)
-            for i in range(0, len(assets), n_cols):
-                row_assets = assets[i : i + n_cols]
-                cols = st.columns(len(row_assets))
-                for j, asset in enumerate(row_assets):
-                    with cols[j]:
-                        default_val = 0.12 if asset in stocks else 0.03
-                        dcf_returns[asset] = st.number_input(
-                            asset, 0.0, 1.0, default_val, 0.01,
-                            format="%.2f", key=f"dcf_{asset}",
-                        )
-        else:
-            dcf_returns = {}
 
-        # Row 3: Run button — full width, bottom of panel
-        st.markdown('<div style="height:8px;"></div>', unsafe_allow_html=True)
+    # ── Run button ────────────────────────────────────────────────────────────
+    st.markdown('<div style="height:4px;"></div>', unsafe_allow_html=True)
+    _, btn_col, _ = st.columns([2, 1, 2])
+    with btn_col:
         run_button = st.button("Run Optimization", type="primary", use_container_width=True)
 
+    st.markdown(
+        f'<hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:18px 0 4px 0;">',
+        unsafe_allow_html=True,
+    )
+
     if not assets:
-        st.warning("Enter at least one ticker in the configurator above.")
+        st.warning("Add at least one stock ticker on the left to get started.")
         return
 
     if not run_button and "portfolio_last_results" not in st.session_state:
-        st.info("Configure your portfolio above and click **Run Optimization** to see results.")
+        st.info("Set your holdings and preferences above, then click **Run Optimization**.")
         return
 
     # ── Run or restore from cache ─────────────────────────────────────────────
