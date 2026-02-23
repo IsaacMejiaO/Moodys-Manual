@@ -549,7 +549,6 @@ def render_portfolio_monte_carlo():
 
         st.markdown('<p class="config-label">Expected returns</p>', unsafe_allow_html=True)
         st.markdown(
-            '<p class="config-hint">Annual return you expect per position</p>',
             unsafe_allow_html=True,
         )
         dcf_returns = {}
