@@ -536,8 +536,7 @@ def render_portfolio_monte_carlo():
             label_visibility="collapsed",
         )
         st.markdown(
-            f'<p class="config-hint" style="margin-top:-6px;">'
-            f'{years_back} years of price history</p>',
+            f'<p class="config-hint" style="margin-top:-6px;">',
             unsafe_allow_html=True,
         )
 
