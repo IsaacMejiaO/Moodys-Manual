@@ -472,6 +472,10 @@ def render_portfolio_monte_carlo():
     div[data-testid="stSlider"] label p {{
         font-size: 13px !important;
     }}
+    /* Force config columns to equal height and stretch children */
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stVerticalBlockBorderWrapper"]) {{
+        align-items: stretch;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -492,7 +496,7 @@ def render_portfolio_monte_carlo():
         stocks_input = st.text_area(
             "stocks",
             key="portfolio_stocks_input",
-            height=158,
+            height=120,
             label_visibility="collapsed",
             placeholder="AAPL\nMSFT\nNVDA\nAMZN\n...",
         )
@@ -553,15 +557,19 @@ def render_portfolio_monte_carlo():
         )
         dcf_returns = {}
         if assets:
-            for asset in assets:
-                default_val = 0.12 if asset in stocks else 0.03
-                dcf_returns[asset] = st.number_input(
-                    asset,
-                    min_value=0.0, max_value=1.0,
-                    value=default_val, step=0.01,
-                    format="%.2f",
-                    key=f"dcf_{asset}",
-                )
+            pairs = [assets[i:i+2] for i in range(0, len(assets), 2)]
+            for pair in pairs:
+                cols = st.columns(2)
+                for col, asset in zip(cols, pair):
+                    with col:
+                        default_val = 0.12 if asset in stocks else 0.03
+                        dcf_returns[asset] = st.number_input(
+                            asset,
+                            min_value=0.0, max_value=1.0,
+                            value=default_val, step=0.01,
+                            format="%.2f",
+                            key=f"dcf_{asset}",
+                        )
         else:
             st.markdown(
                 '<p style="font-size:13px;color:rgba(255,255,255,0.3);margin-top:8px;">'
