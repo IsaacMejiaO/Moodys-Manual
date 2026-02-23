@@ -49,50 +49,7 @@ def ranked_blue_map(values: pd.Series, darkest: str = "#104861", lightest: str =
         color_map[key] = _interpolate_hex(lightest, darkest, t)
     return color_map
 
-def inject_custom_css():
-    """Inject custom CSS for portfolio page styling."""
-    st.markdown(
-        """
-        <style>
-        .portfolio-hero {
-            padding: 1rem 1.2rem;
-            border-radius: 14px;
-            border: 1px solid rgba(67, 89, 119, 0.28);
-            background:
-                radial-gradient(circle at 8% 12%, rgba(31, 119, 180, 0.18), transparent 42%),
-                radial-gradient(circle at 92% 8%, rgba(17, 94, 89, 0.14), transparent 38%),
-                linear-gradient(160deg, rgba(18, 30, 49, 0.06), rgba(12, 19, 31, 0.03));
-            margin-bottom: 1rem;
-        }
-        .portfolio-hero-title {
-            margin: 0;
-            font-size: 1.45rem;
-            letter-spacing: 0.2px;
-        }
-        .portfolio-hero-subtitle {
-            margin-top: 0.3rem;
-            font-size: 0.9rem;
-            opacity: 0.8;
-        }
-        .portfolio-badge-row {
-            margin-top: 0.75rem;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.45rem;
-        }
-        .portfolio-badge {
-            border-radius: 999px;
-            padding: 0.2rem 0.55rem;
-            font-size: 0.75rem;
-            font-weight: 600;
-            letter-spacing: 0.2px;
-            border: 1px solid rgba(31, 119, 180, 0.35);
-            background: rgba(31, 119, 180, 0.08);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+
 
 def plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol, port_return, eq_grid):
     """Create efficient frontier visualization."""
@@ -378,270 +335,544 @@ def plot_return_distribution(returns: pd.Series) -> go.Figure:
     )
     return fig
 
+
+# ── Performance-page style constants ─────────────────────────────────────────
+UP      = "#00C805"
+DOWN    = "#FF3B30"
+BLUE    = "#0A7CFF"
+ORANGE  = "#FF9F0A"
+GREY    = "#6E6E73"
+BORDER  = "#E5E5EA"
+
+_CHART_LAYOUT = dict(
+    template="plotly_dark",
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="#ffffff", family="'SF Pro Display','Segoe UI',sans-serif"),
+)
+
+def _inject_css() -> None:
+    st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    html, body, [class*="css"] {{ font-family: 'Inter', 'SF Pro Display', -apple-system, sans-serif; }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 4px; border-bottom: 2px solid {BORDER}; background: transparent !important; }}
+    .stTabs [data-baseweb="tab"] {{ font-weight: 600; font-size: 14px; padding: 10px 18px; color: #ffffff; border-radius: 8px 8px 0 0; background: transparent !important; }}
+    .stTabs [aria-selected="true"] {{ color: {BLUE} !important; border-bottom: 2px solid {BLUE} !important; background: transparent !important; }}
+    div[data-testid="metric-container"] {{ background: transparent !important; border: 1px solid {BORDER}; border-radius: 10px; padding: 12px 14px; }}
+    div[data-testid="stMetricLabel"] p, div[data-testid="stMetricLabel"] label {{ color: #ffffff !important; }}
+    div[data-testid="stMetricValue"] > div {{ color: #ffffff !important; }}
+    div[data-testid="stExpander"] {{ background: transparent !important; border: 1px solid {BORDER} !important; border-radius: 10px; }}
+    div[data-testid="stExpander"] > details > summary {{ color: #ffffff !important; font-weight: 600; }}
+    div[data-testid="stExpander"] > details > summary svg {{ fill: #ffffff !important; }}
+    div[data-testid="stAlert"] {{ background: transparent !important; }}
+    div[data-testid="stAlert"] p, div[data-testid="stAlert"] div {{ color: #ffffff !important; }}
+    .stRadio > label, .stMultiSelect > label {{ color: #ffffff !important; }}
+    .stCaption p, small {{ color: #ffffff !important; opacity: 0.7; }}
+    .stDownloadButton button {{ background: transparent !important; border: 1px solid {BORDER} !important; color: #ffffff !important; }}
+    .block-container {{ background: transparent !important; }}
+    p, span, label, div {{ color: #ffffff; }}
+    .stSelectbox label {{ color: #ffffff !important; }}
+    </style>""", unsafe_allow_html=True)
+
+
+def _metric_card(label: str, value_str: str, color: str = "#ffffff",
+                 emoji: str = "", tooltip: str = "") -> str:
+    return f"""
+<div title="{tooltip}" style="background:transparent;border-radius:12px;padding:16px 18px;
+     cursor:{'help' if tooltip else 'default'};border:1px solid {BORDER};height:100%;">
+  <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;color:#ffffff;
+              text-transform:uppercase;margin-bottom:6px;">{(emoji+' ') if emoji else ''}{label}</div>
+  <div style="font-size:26px;font-weight:700;line-height:1.1;color:{color};">{value_str}</div>
+  {f'<div style="font-size:11px;color:#ffffff;margin-top:6px;line-height:1.4;opacity:0.7;">{tooltip}</div>' if tooltip else ''}
+</div>"""
+
+
+def _verdict_card(title: str, verdict: str, verdict_color: str, body: str) -> str:
+    return f"""
+<div style="background:transparent;border-radius:12px;padding:18px 20px;border:1px solid {BORDER};
+     border-left:4px solid {verdict_color};margin-bottom:12px;">
+  <div style="font-size:13px;font-weight:700;color:#ffffff;margin-bottom:4px;">{title}</div>
+  <div style="font-size:15px;font-weight:700;color:{verdict_color};margin-bottom:6px;">{verdict}</div>
+  <div style="font-size:13px;color:#ffffff;opacity:0.85;line-height:1.6;">{body}</div>
+</div>"""
+
+
+def _section_header(title: str, subtitle: str = "") -> None:
+    sub = f'<p style="color:#ffffff;opacity:0.7;font-size:14px;margin:2px 0 0 0;">{subtitle}</p>' if subtitle else ""
+    st.markdown(
+        f'<div style="margin:24px 0 12px 0;"><h3 style="font-size:20px;font-weight:700;'
+        f'color:#ffffff;margin:0;">{title}</h3>{sub}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _divider() -> None:
+    st.markdown(f'<hr style="border:none;border-top:1px solid {BORDER};margin:20px 0;">',
+                unsafe_allow_html=True)
+
+
+def _sharpe_verdict(s: float):
+    if np.isnan(s): return "Not enough data", GREY
+    if s >= 2.0:    return "Excellent", UP
+    if s >= 1.0:    return "Good", UP
+    if s >= 0.5:    return "Acceptable", ORANGE
+    if s >= 0.0:    return "Below average", ORANGE
+    return "Poor", DOWN
+
+
+def _vol_verdict(v: float):
+    if np.isnan(v): return "Not enough data", GREY
+    if v < 0.10:    return "Very calm", UP
+    if v < 0.18:    return "Moderate", UP
+    if v < 0.28:    return "Quite volatile", ORANGE
+    return "Very volatile", DOWN
+
+
 def render_portfolio_monte_carlo():
-    """Render the Portfolio page."""
-    inject_custom_css()
+    """Render the Portfolio Optimizer page, styled to match the Performance page."""
+    _inject_css()
+
     st.markdown(
         '<h1 style="font-size:32px;font-weight:800;color:#ffffff;margin-bottom:4px;">Portfolio</h1>',
         unsafe_allow_html=True,
     )
-    left_col, right_col = st.columns([1, 1], gap="medium")
 
-    with left_col:
-        if "portfolio_stocks_input" not in st.session_state:
-            st.session_state["portfolio_stocks_input"] = "ASML\nCVX\nGOOGL\nMSFT\nSTRL\nTSM"
-        # Auto-size the textarea so the ticker list stays visible without internal scrolling.
-        current_ticker_text = st.session_state.get("portfolio_stocks_input", "")
-        visible_lines = max(8, min(28, len([ln for ln in current_ticker_text.splitlines() if ln.strip()]) + 3))
-        stocks_input = st.text_area(
-            "Stock Tickers",
-            key="portfolio_stocks_input",
-            height=visible_lines * 24,
-        )
-        bonds_input = st.text_input("Bond Ticker", value="VGIT")
+    # ── Inputs (always visible at top, collapsible) ───────────────────────────
+    with st.expander("⚙️  Configure & Run Optimizer", expanded=True):
+        left_col, right_col = st.columns([1, 1], gap="large")
 
-        # As requested: MC + Years above Risk Appetite
-        col_a, col_b = st.columns(2)
-        with col_a:
-            mc_sims = st.number_input("MC Simulations", 1000, 10000, 3000, 500)
-        with col_b:
-            years_back = st.number_input("Years of Data", 5, 30, 25, 1)
+        with left_col:
+            if "portfolio_stocks_input" not in st.session_state:
+                st.session_state["portfolio_stocks_input"] = "ASML\nCVX\nGOOGL\nMSFT\nSTRL\nTSM"
+            current_ticker_text = st.session_state.get("portfolio_stocks_input", "")
+            visible_lines = max(6, min(20, len([ln for ln in current_ticker_text.splitlines() if ln.strip()]) + 2))
+            stocks_input = st.text_area(
+                "Stock Tickers (one per line)",
+                key="portfolio_stocks_input",
+                height=visible_lines * 24,
+            )
+            bonds_input = st.text_input("Bond / Defensive Ticker", value="VGIT")
 
-        risk_appetite = st.slider(
-            "Risk Appetite",
-            0.0,
-            1.0,
-            0.75,
-            0.05,
-            help="0 = Conservative (bonds only), 1 = Aggressive (equity only)",
-        )
+        with right_col:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                mc_sims = st.number_input("MC Simulations", 1000, 10000, 3000, 500)
+            with col_b:
+                years_back = st.number_input("Years of Data", 5, 30, 25, 1)
 
-        stocks = [s.strip().upper() for s in stocks_input.split("\n") if s.strip()]
-        bonds = [bonds_input.strip().upper()] if bonds_input.strip() else []
-        assets = stocks + bonds
+            risk_appetite = st.slider(
+                "Risk Appetite",
+                0.0, 1.0, 0.75, 0.05,
+                help="0 = Conservative (bonds only), 1 = Aggressive (equity only)",
+            )
 
-        st.markdown("#### Expected Returns")
-        n_cols = min(len(assets), 3) if assets else 1
-        dcf_returns = {}
-        for i in range(0, len(assets), n_cols):
-            cols = st.columns(n_cols)
-            for j, asset in enumerate(assets[i : i + n_cols]):
-                with cols[j]:
-                    default_val = 0.12 if asset in stocks else 0.03
-                    dcf_returns[asset] = st.number_input(
-                        asset,
-                        0.0,
-                        1.0,
-                        default_val,
-                        0.01,
-                        format="%.2f",
-                        key=f"dcf_{asset}",
-                    )
+            stocks = [s.strip().upper() for s in stocks_input.split("\n") if s.strip()]
+            bonds = [bonds_input.strip().upper()] if bonds_input.strip() else []
+            assets = stocks + bonds
 
-        run_button = st.button("Run Optimization", type="primary", width="stretch")
-
-    with right_col:
-        st.markdown("#### Holdings Mix")
-        holdings_mix_slot = st.empty()
-        cached_weights = st.session_state.get("portfolio_last_weights")
-        if isinstance(cached_weights, dict) and cached_weights:
-            w_cached = pd.Series(cached_weights, dtype=float)
-            w_cached = w_cached[w_cached > 0]
-            if not w_cached.empty:
-                shared_color_map = ranked_blue_map(w_cached * 100)
-                with holdings_mix_slot.container():
-                    st.plotly_chart(plot_allocation_donut(w_cached, color_map=shared_color_map), width="stretch")
+            if assets:
+                st.markdown(
+                    '<p style="font-size:12px;font-weight:600;letter-spacing:0.05em;'
+                    'text-transform:uppercase;color:#ffffff;margin-bottom:6px;">Expected Returns</p>',
+                    unsafe_allow_html=True,
+                )
+                n_cols = min(len(assets), 3)
+                dcf_returns = {}
+                for i in range(0, len(assets), n_cols):
+                    cols = st.columns(n_cols)
+                    for j, asset in enumerate(assets[i : i + n_cols]):
+                        with cols[j]:
+                            default_val = 0.12 if asset in stocks else 0.03
+                            dcf_returns[asset] = st.number_input(
+                                asset, 0.0, 1.0, default_val, 0.01,
+                                format="%.2f", key=f"dcf_{asset}",
+                            )
             else:
-                holdings_mix_slot.info("Run optimization to generate contribution chart.")
-        else:
-            holdings_mix_slot.info("Run optimization to generate contribution chart.")
+                dcf_returns = {}
 
-        st.markdown("#### Contribution to Portfolio Risk")
-        risk_contrib_slot = st.empty()
-        risk_contrib_slot.info("Run optimization to generate contribution chart.")
+        run_button = st.button("▶  Run Optimization", type="primary", use_container_width=True)
 
     if not assets:
-        st.warning("Enter at least one ticker.")
+        st.warning("Enter at least one ticker in the configurator above.")
         return
 
-    if not run_button:
+    if not run_button and "portfolio_last_results" not in st.session_state:
+        st.info("Configure your portfolio above and click **Run Optimization** to see results.")
         return
 
-    with st.spinner("Fetching market data and optimizing portfolio..."):
-        try:
-            risk_target = risk_appetite
-            cdar_alpha = 0.05
-            trading_days = 252
-            mc_simulations = mc_sims
-            eps = 1e-9
+    # ── Run or restore from cache ─────────────────────────────────────────────
+    results = st.session_state.get("portfolio_last_results")
 
-            start = (datetime.today() - pd.DateOffset(years=years_back)).strftime("%Y-%m-%d")
-            end = datetime.today().strftime("%Y-%m-%d")
-            os.environ["YF_DISABLE_PROTOBUF"] = "1"
-
-            def get_prices_safe(tickers, start_date, end_date):
-                df_list = []
-                for ticker in tickers:
-                    try:
-                        df = yf.Ticker(ticker).history(start=start_date, end=end_date)["Close"]
-                        df_list.append(df.rename(ticker))
-                    except Exception as exc:
-                        st.warning(f"Could not fetch {ticker}: {exc}")
-                if not df_list:
-                    raise ValueError("No tickers could be fetched.")
-                return pd.concat(df_list, axis=1)
-
-            prices = get_prices_safe(assets, start, end)
-            returns = prices.pct_change().dropna()
-
-            stocks = [s for s in stocks if s in returns.columns]
-            bonds = [b for b in bonds if b in returns.columns]
-            assets = stocks + bonds
-            if not assets:
-                raise ValueError("No valid assets found in fetched data.")
-
-            n_obs = len(returns)
-            hist_ann_returns = (1 + returns).prod() ** (trading_days / n_obs) - 1
-            if all(a in dcf_returns for a in assets):
-                exp_returns = pd.Series(dcf_returns)
-            else:
-                exp_returns = 0.3 * hist_ann_returns + 0.7 * hist_ann_returns.mean()
-
-            cov = LedoitWolf().fit(returns[assets]).covariance_ * trading_days
-            cov = pd.DataFrame(cov, index=assets, columns=assets)
-            market_ret = returns[stocks].mean(axis=1) if stocks else returns[assets].mean(axis=1)
-
-            def downside_beta(asset_ret, market_series):
-                down = market_series < 0
-                if down.sum() < 2:
-                    return 0.0
-                return np.cov(asset_ret[down], market_series[down])[0, 1] / np.var(market_series[down])
-
-            def cdar(x, alpha=cdar_alpha):
-                equity = (1 + x).cumprod()
-                dd = equity / equity.cummax() - 1
-                tail = dd[dd <= dd.quantile(alpha)]
-                return abs(tail.mean()) if len(tail) else 0.0
-
-            def cvar(x, alpha=cdar_alpha):
-                x_sorted = np.sort(x)
-                n = max(int(alpha * len(x_sorted)), 1)
-                return -x_sorted[:n].mean()
-
-            asset_downbeta = returns[assets].apply(lambda x: downside_beta(x, market_ret))
-            asset_cdar = returns[assets].apply(cdar)
-            asset_cvar = returns[assets].apply(cvar)
-            asset_vol = returns[assets].std() * np.sqrt(trading_days)
-            asset_risk = 0.4 * asset_cdar + 0.4 * asset_cvar + 0.2 * asset_vol + 0.2 * asset_downbeta
-
-            if stocks:
-                stock_mix = (exp_returns[stocks] / (asset_risk[stocks] + eps)).clip(lower=0)
-                stock_mix = (
-                    pd.Series(1 / len(stocks), index=stocks)
-                    if stock_mix.sum() <= 0
-                    else stock_mix / stock_mix.sum()
-                )
-            else:
-                stock_mix = pd.Series(dtype=float)
-
-            eq_grid = np.linspace(0, 1, 60)
-            curve_weights = []
-            curve_ret, curve_risk = [], []
-            for ew in eq_grid:
-                w = pd.Series(0.0, index=assets)
-                if stocks:
-                    w[stocks] = stock_mix * ew
-                if bonds:
-                    w[bonds] = (1 - ew) / len(bonds)
-                elif stocks:
-                    w[stocks] = w[stocks] + (1 - ew) * stock_mix
-                curve_weights.append(w)
-                curve_ret.append(w @ exp_returns[assets])
-                curve_risk.append(np.sqrt(w @ cov @ w))
-
-            idx = int(risk_target * (len(eq_grid) - 1))
-            weights = curve_weights[idx]
-            weights_nonzero = weights[weights > 0]
-            st.session_state["portfolio_last_weights"] = weights_nonzero.to_dict()
-            shared_color_map = ranked_blue_map(weights_nonzero * 100)
-
-            with holdings_mix_slot.container():
-                st.plotly_chart(
-                    plot_allocation_donut(weights_nonzero, color_map=shared_color_map),
-                    width="stretch",
-                )
-
-            with risk_contrib_slot.container():
-                st.plotly_chart(
-                    plot_risk_contribution(weights, cov, color_map=shared_color_map),
-                    width="stretch",
-                )
-
-            equity_weight = weights[stocks].sum() if stocks else 0.0
-            bond_weight = weights[bonds].sum() if bonds else 0.0
-
-            port_return = weights @ exp_returns[assets]
-            port_vol = np.sqrt(weights @ cov @ weights)
-            port_series = returns[assets] @ weights
-            port_cdar = cdar(port_series)
-            port_cvar = cvar(port_series)
-            annual_ret = port_series.mean() * 252
-            sharpe_ratio = (port_return - 0.02) / port_vol
-
-            mc_risk, mc_ret = [], []
-            for _ in range(mc_simulations):
-                ew = np.random.rand()
-                w = pd.Series(0.0, index=assets)
-                if stocks:
-                    sw = np.random.dirichlet(np.ones(len(stocks)))
-                    w[stocks] = sw * ew
-                if bonds:
-                    w[bonds] = (1 - ew) / len(bonds)
-                elif stocks:
-                    w[stocks] = w[stocks] + (1 - ew) * sw
-                mc_ret.append(w @ exp_returns[assets])
-                mc_risk.append(np.sqrt(w @ cov @ w))
-
-            st.markdown("---")
-            metric_cols = st.columns(6)
-            with metric_cols[0]:
-                st.metric("Expected Return", f"{port_return * 100:.2f}%")
-            with metric_cols[1]:
-                st.metric("Historical Return", f"{annual_ret * 100:.2f}%")
-            with metric_cols[2]:
-                st.metric("Volatility", f"{port_vol * 100:.2f}%")
-            with metric_cols[3]:
-                st.metric("Sharpe", f"{sharpe_ratio:.2f}")
-            with metric_cols[4]:
-                st.metric("CDaR (5%)", f"{port_cdar * 100:.2f}%")
-            with metric_cols[5]:
-                st.metric("CVaR (5%)", f"{port_cvar * 100:.2f}%")
-
-            st.markdown("")
-            chart_left, chart_right = st.columns([1, 1], gap="medium")
-            with chart_left:
-                st.markdown("#### Efficient Frontier")
-                st.plotly_chart(
-                    plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol, port_return, eq_grid),
-                    width="stretch",
-                )
-            with chart_right:
-                st.markdown("#### Rolling Volatility")
-                st.plotly_chart(plot_rolling_volatility(port_series), width="stretch")
-
-            st.markdown("")
-            st.markdown("#### Cumulative Performance vs Benchmark")
+    if run_button:
+        with st.spinner("Fetching market data and optimizing…"):
             try:
-                spy = yf.Ticker("SPY").history(start=start, end=end)["Close"]
-                spy_returns = spy.pct_change().dropna().reindex(port_series.index, fill_value=0)
-                fig_cum = plot_cumulative_returns(port_series, spy_returns)
+                cdar_alpha   = 0.05
+                trading_days = 252
+                eps          = 1e-9
+
+                start = (datetime.today() - pd.DateOffset(years=years_back)).strftime("%Y-%m-%d")
+                end   = datetime.today().strftime("%Y-%m-%d")
+                os.environ["YF_DISABLE_PROTOBUF"] = "1"
+
+                def get_prices_safe(tickers, start_date, end_date):
+                    df_list = []
+                    for ticker in tickers:
+                        try:
+                            df = yf.Ticker(ticker).history(start=start_date, end=end_date)["Close"]
+                            df_list.append(df.rename(ticker))
+                        except Exception as exc:
+                            st.warning(f"Could not fetch {ticker}: {exc}")
+                    if not df_list:
+                        raise ValueError("No tickers could be fetched.")
+                    return pd.concat(df_list, axis=1)
+
+                prices  = get_prices_safe(assets, start, end)
+                returns = prices.pct_change().dropna()
+
+                stocks_clean = [s for s in stocks if s in returns.columns]
+                bonds_clean  = [b for b in bonds  if b in returns.columns]
+                assets_clean = stocks_clean + bonds_clean
+                if not assets_clean:
+                    raise ValueError("No valid assets found in fetched data.")
+
+                n_obs           = len(returns)
+                hist_ann_returns = (1 + returns).prod() ** (trading_days / n_obs) - 1
+                exp_returns = (
+                    pd.Series({a: dcf_returns[a] for a in assets_clean})
+                    if all(a in dcf_returns for a in assets_clean)
+                    else 0.3 * hist_ann_returns + 0.7 * hist_ann_returns.mean()
+                )
+
+                cov        = LedoitWolf().fit(returns[assets_clean]).covariance_ * trading_days
+                cov        = pd.DataFrame(cov, index=assets_clean, columns=assets_clean)
+                market_ret = returns[stocks_clean].mean(axis=1) if stocks_clean else returns[assets_clean].mean(axis=1)
+
+                def downside_beta(asset_ret, market_series):
+                    down = market_series < 0
+                    if down.sum() < 2: return 0.0
+                    return np.cov(asset_ret[down], market_series[down])[0, 1] / np.var(market_series[down])
+
+                def cdar(x, alpha=cdar_alpha):
+                    equity = (1 + x).cumprod()
+                    dd = equity / equity.cummax() - 1
+                    tail = dd[dd <= dd.quantile(alpha)]
+                    return abs(tail.mean()) if len(tail) else 0.0
+
+                def cvar(x, alpha=cdar_alpha):
+                    x_sorted = np.sort(x)
+                    n = max(int(alpha * len(x_sorted)), 1)
+                    return -x_sorted[:n].mean()
+
+                asset_downbeta = returns[assets_clean].apply(lambda x: downside_beta(x, market_ret))
+                asset_cdar     = returns[assets_clean].apply(cdar)
+                asset_cvar     = returns[assets_clean].apply(cvar)
+                asset_vol      = returns[assets_clean].std() * np.sqrt(trading_days)
+                asset_risk     = 0.4*asset_cdar + 0.4*asset_cvar + 0.2*asset_vol + 0.2*asset_downbeta
+
+                if stocks_clean:
+                    stock_mix = (exp_returns[stocks_clean] / (asset_risk[stocks_clean] + eps)).clip(lower=0)
+                    stock_mix = (pd.Series(1/len(stocks_clean), index=stocks_clean)
+                                 if stock_mix.sum() <= 0 else stock_mix / stock_mix.sum())
+                else:
+                    stock_mix = pd.Series(dtype=float)
+
+                eq_grid       = np.linspace(0, 1, 60)
+                curve_weights, curve_ret, curve_risk = [], [], []
+                for ew in eq_grid:
+                    w = pd.Series(0.0, index=assets_clean)
+                    if stocks_clean: w[stocks_clean] = stock_mix * ew
+                    if bonds_clean:  w[bonds_clean]  = (1 - ew) / len(bonds_clean)
+                    elif stocks_clean: w[stocks_clean] = w[stocks_clean] + (1 - ew) * stock_mix
+                    curve_weights.append(w)
+                    curve_ret.append(w @ exp_returns[assets_clean])
+                    curve_risk.append(np.sqrt(w @ cov @ w))
+
+                idx             = int(risk_appetite * (len(eq_grid) - 1))
+                weights         = curve_weights[idx]
+                weights_nonzero = weights[weights > 0]
+
+                port_return  = weights @ exp_returns[assets_clean]
+                port_vol_val = np.sqrt(weights @ cov @ weights)
+                port_series  = returns[assets_clean] @ weights
+                port_cdar    = cdar(port_series)
+                port_cvar    = cvar(port_series)
+                annual_ret   = port_series.mean() * 252
+                sharpe       = (port_return - 0.02) / port_vol_val
+
+                mc_risk, mc_ret = [], []
+                for _ in range(mc_sims):
+                    ew = np.random.rand()
+                    w  = pd.Series(0.0, index=assets_clean)
+                    if stocks_clean:
+                        sw = np.random.dirichlet(np.ones(len(stocks_clean)))
+                        w[stocks_clean] = sw * ew
+                    if bonds_clean:  w[bonds_clean]  = (1 - ew) / len(bonds_clean)
+                    elif stocks_clean: w[stocks_clean] = w[stocks_clean] + (1 - ew) * sw
+                    mc_ret.append(w @ exp_returns[assets_clean])
+                    mc_risk.append(np.sqrt(w @ cov @ w))
+
+                try:
+                    spy         = yf.Ticker("SPY").history(start=start, end=end)["Close"]
+                    spy_returns = spy.pct_change().dropna().reindex(port_series.index, fill_value=0)
+                except Exception:
+                    spy_returns = None
+
+                results = dict(
+                    weights=weights, weights_nonzero=weights_nonzero,
+                    cov=cov, port_series=port_series,
+                    port_return=port_return, port_vol=port_vol_val,
+                    annual_ret=annual_ret, sharpe=sharpe,
+                    port_cdar=port_cdar, port_cvar=port_cvar,
+                    mc_risk=mc_risk, mc_ret=mc_ret,
+                    curve_risk=curve_risk, curve_ret=curve_ret,
+                    eq_grid=eq_grid, spy_returns=spy_returns,
+                    stocks=stocks_clean, bonds=bonds_clean,
+                    start=start, end=end,
+                )
+                st.session_state["portfolio_last_weights"]  = weights_nonzero.to_dict()
+                st.session_state["portfolio_last_results"]  = results
+
+            except Exception as exc:
+                import traceback as _tb
+                st.error(f"Optimization failed: {exc}")
+                with st.expander("Show details"):
+                    st.code(_tb.format_exc())
+                return
+
+    if not results:
+        return
+
+    # ── Unpack results ────────────────────────────────────────────────────────
+    weights         = results["weights"]
+    weights_nonzero = results["weights_nonzero"]
+    cov             = results["cov"]
+    port_series     = results["port_series"]
+    port_return     = results["port_return"]
+    port_vol_val    = results["port_vol"]
+    annual_ret      = results["annual_ret"]
+    sharpe          = results["sharpe"]
+    port_cdar       = results["port_cdar"]
+    port_cvar       = results["port_cvar"]
+    mc_risk         = results["mc_risk"]
+    mc_ret          = results["mc_ret"]
+    curve_risk      = results["curve_risk"]
+    curve_ret       = results["curve_ret"]
+    eq_grid         = results["eq_grid"]
+    spy_returns     = results["spy_returns"]
+    stocks_clean    = results["stocks"]
+    bonds_clean     = results["bonds"]
+    start           = results["start"]
+    end             = results["end"]
+
+    shared_color_map = ranked_blue_map(weights_nonzero * 100)
+
+    # ── Narrative banner (mirrors Performance page) ───────────────────────────
+    ret_sign    = "+" if port_return >= 0 else ""
+    risk_word   = ("conservative" if port_vol_val < 0.12
+                   else "moderate" if port_vol_val < 0.20 else "aggressive")
+    sharpe_word = ("excellent" if sharpe >= 2 else "good" if sharpe >= 1
+                   else "acceptable" if sharpe >= 0.5 else "below-average")
+    eq_pct      = int(weights[stocks_clean].sum() * 100) if stocks_clean else 0
+    narrative   = (
+        f"Your optimized portfolio holds **{len(weights_nonzero)} positions** "
+        f"with a **{eq_pct}% equity / {100-eq_pct}% bond** split. "
+        f"The model expects a **{ret_sign}{port_return*100:.1f}% annualized return** "
+        f"at **{port_vol_val*100:.1f}% volatility** — a {risk_word} risk profile. "
+        f"The Sharpe ratio of **{sharpe:.2f}** is considered {sharpe_word}."
+    )
+    st.markdown(
+        f'<div style="background:linear-gradient(135deg,rgba(10,124,255,0.15),rgba(10,124,255,0.08));'
+        f'border-radius:14px;padding:20px 24px;margin:16px 0 20px 0;border:1px solid rgba(10,124,255,0.4);">'
+        f'<div style="font-size:11px;font-weight:700;color:#ffffff;letter-spacing:0.08em;'
+        f'text-transform:uppercase;margin-bottom:8px;">Optimized Portfolio at a Glance</div>'
+        f'<div style="font-size:15px;color:#ffffff;line-height:1.7;">{narrative}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── KPI metric cards (top row) ────────────────────────────────────────────
+    ret_color = UP if port_return >= 0 else DOWN
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1:
+        st.markdown(_metric_card("Expected Return", f"{ret_sign}{port_return*100:.1f}%",
+            ret_color, "📈", "Model-blended annualized expected return."), unsafe_allow_html=True)
+    with c2:
+        hist_color = UP if annual_ret >= 0 else DOWN
+        st.markdown(_metric_card("Historical Return", f"{'+' if annual_ret>=0 else ''}{annual_ret*100:.1f}%",
+            hist_color, "📅", "Actual annualized return earned over the look-back window."), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_metric_card("Volatility", f"{port_vol_val*100:.1f}%",
+            ORANGE if port_vol_val < 0.25 else DOWN, "〰️", "Annualized portfolio standard deviation."), unsafe_allow_html=True)
+    with c4:
+        sh_color = UP if sharpe >= 1 else (ORANGE if sharpe >= 0.5 else DOWN)
+        st.markdown(_metric_card("Sharpe Ratio", f"{sharpe:.2f}",
+            sh_color, "⚖️", "Return per unit of risk above a 2% risk-free rate. >1 is good."), unsafe_allow_html=True)
+    with c5:
+        st.markdown(_metric_card("CDaR (5%)", f"{port_cdar*100:.1f}%",
+            DOWN if port_cdar > 0.15 else ORANGE, "📉", "Conditional Drawdown at Risk — average of the 5% worst drawdowns."), unsafe_allow_html=True)
+    with c6:
+        st.markdown(_metric_card("CVaR (5%)", f"{port_cvar*100:.1f}%",
+            DOWN if port_cvar > 0.03 else ORANGE, "🎲", "Expected daily loss in the worst 5% of days."), unsafe_allow_html=True)
+
+    _divider()
+
+    # ── Tabs ─────────────────────────────────────────────────────────────────
+    tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Analytics"])
+
+    # ════════ TAB 0 — ALLOCATION ═════════════════════════════════════════════
+    with tabs[0]:
+        col_donut, col_risk = st.columns([1, 1], gap="medium")
+
+        with col_donut:
+            _section_header("Holdings Mix", "Optimized weight for each position")
+            st.plotly_chart(
+                plot_allocation_donut(weights_nonzero, color_map=shared_color_map),
+                width="stretch",
+            )
+
+        with col_risk:
+            _section_header("Contribution to Portfolio Risk", "How much each position drives overall volatility")
+            st.plotly_chart(
+                plot_risk_contribution(weights, cov, color_map=shared_color_map),
+                width="stretch",
+            )
+
+        _divider()
+        _section_header("Position Detail", "Weight and risk breakdown per asset")
+        portfolio_variance = weights @ cov @ weights
+        marginal_contrib   = cov @ weights
+        risk_contrib       = weights * marginal_contrib / portfolio_variance
+        detail_rows = []
+        for asset in weights_nonzero.index:
+            detail_rows.append({
+                "Ticker":           asset,
+                "Type":             "Stock" if asset in stocks_clean else "Bond",
+                "Weight %":         f"{weights_nonzero[asset]*100:.1f}%",
+                "Risk Contrib %":   f"{risk_contrib.get(asset, 0)*100:.1f}%",
+            })
+        st.dataframe(pd.DataFrame(detail_rows), hide_index=True, use_container_width=True)
+
+        s_label, s_color = _sharpe_verdict(sharpe)
+        v_label, v_color = _vol_verdict(port_vol_val)
+        ca, cb = st.columns(2)
+        with ca:
+            st.markdown(_verdict_card(
+                "Quality of Return (Sharpe)", f"{s_label} ({sharpe:.2f})", s_color,
+                f"For every unit of total risk, this portfolio earns a Sharpe of {sharpe:.2f}. "
+                f"Above 1.0 is generally considered good; above 2.0 is excellent."
+            ), unsafe_allow_html=True)
+        with cb:
+            st.markdown(_verdict_card(
+                "Volatility Profile", f"{v_label} ({port_vol_val*100:.1f}%/yr)", v_color,
+                f"The portfolio swings {port_vol_val*100:.1f}% per year. "
+                f"{'Lower volatility makes it easier to stay the course in down markets.' if port_vol_val < 0.20 else 'Higher volatility means larger swings in both directions.'}"
+            ), unsafe_allow_html=True)
+
+    # ════════ TAB 1 — FRONTIER & RISK ════════════════════════════════════════
+    with tabs[1]:
+        col_ef, col_corr = st.columns([1.1, 0.9], gap="medium")
+        with col_ef:
+            _section_header("Efficient Frontier", f"{mc_sims:,} Monte Carlo simulations · ★ = your portfolio")
+            st.plotly_chart(
+                plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol_val, port_return, eq_grid),
+                width="stretch",
+            )
+        with col_corr:
+            _section_header("Asset Correlation", "Lower correlations = better diversification")
+            # Rebuild returns for correlation from the stored port_series
+            try:
+                prices_corr = pd.concat([
+                    yf.Ticker(t).history(start=start, end=end)["Close"].rename(t)
+                    for t in weights_nonzero.index
+                ], axis=1).pct_change().dropna()
+                st.plotly_chart(plot_correlation_heatmap(prices_corr), width="stretch")
             except Exception:
-                fig_cum = plot_cumulative_returns(port_series)
-            st.plotly_chart(fig_cum, width="stretch")
+                st.info("Correlation matrix unavailable — re-run optimization to refresh.")
 
-        except Exception as exc:
-            st.error(f"Error: {str(exc)}")
-            with st.expander("Show Details"):
-                import traceback
+        _divider()
+        _section_header("Drawdown", "How far the portfolio fell from its previous peak")
+        st.plotly_chart(plot_drawdown(port_series), width="stretch")
 
-                st.code(traceback.format_exc())
+        _divider()
+        col_cdar, col_cvar = st.columns(2)
+        with col_cdar:
+            cdar_color = DOWN if port_cdar > 0.15 else ORANGE
+            st.markdown(_verdict_card(
+                "Conditional Drawdown at Risk (CDaR 5%)",
+                f"{port_cdar*100:.1f}% average worst-case drawdown", cdar_color,
+                "In the 5% worst drawdown scenarios, the portfolio fell an average of "
+                f"{port_cdar*100:.1f}% from its peak. Lower is better."
+            ), unsafe_allow_html=True)
+        with col_cvar:
+            cvar_color = DOWN if port_cvar > 0.03 else ORANGE
+            st.markdown(_verdict_card(
+                "Conditional Value at Risk (CVaR 5%)",
+                f"{port_cvar*100:.2f}% expected daily loss (tail)", cvar_color,
+                "On the worst 5% of trading days, the portfolio lost an average of "
+                f"{port_cvar*100:.2f}%. This is a tail-risk measure — lower is better."
+            ), unsafe_allow_html=True)
+
+    # ════════ TAB 2 — PERFORMANCE ════════════════════════════════════════════
+    with tabs[2]:
+        _section_header(
+            "Cumulative Return vs S&P 500",
+            "Historical portfolio return if held from the start of the look-back window",
+        )
+        try:
+            fig_cum = plot_cumulative_returns(port_series, spy_returns)
+        except Exception:
+            fig_cum = plot_cumulative_returns(port_series)
+        st.plotly_chart(fig_cum, width="stretch")
+
+        _divider()
+        _section_header("Rolling 1-Year Volatility", "How the portfolio's risk changed over time")
+        st.plotly_chart(plot_rolling_volatility(port_series), width="stretch")
+
+        if spy_returns is not None:
+            _divider()
+            excess = port_series.mean() * 252 - spy_returns.mean() * 252
+            exc_color = UP if excess >= 0 else DOWN
+            st.markdown(_verdict_card(
+                "Extra return vs S&P 500 (annualized)",
+                f"{'+' if excess>=0 else ''}{excess*100:.1f}% per year", exc_color,
+                f"Over the look-back period, this portfolio {'outperformed' if excess>=0 else 'underperformed'} "
+                f"the S&P 500 by {abs(excess)*100:.1f} percentage points per year on a historical basis."
+            ), unsafe_allow_html=True)
+
+    # ════════ TAB 3 — ANALYTICS ══════════════════════════════════════════════
+    with tabs[3]:
+        col_dist, col_stats = st.columns([1.1, 0.9], gap="medium")
+
+        with col_dist:
+            _section_header("Daily Return Distribution", "Shape of day-to-day return outcomes")
+            st.plotly_chart(plot_return_distribution(port_series), width="stretch")
+
+        with col_stats:
+            _section_header("Return Statistics")
+            from scipy.stats import kurtosis as _kurt, skew as _skew
+            ann_ret_pct  = annual_ret * 100
+            vol_pct      = port_vol_val * 100
+            skew_val     = float(_skew(port_series.dropna()))
+            kurt_val     = float(_kurt(port_series.dropna()))
+            best_day     = float(port_series.max()) * 100
+            worst_day    = float(port_series.min()) * 100
+            pos_days_pct = (port_series > 0).mean() * 100
+
+            stats_rows = [
+                ("Annualized Return",    f"{ann_ret_pct:+.2f}%"),
+                ("Annualized Volatility",f"{vol_pct:.2f}%"),
+                ("Sharpe Ratio",         f"{sharpe:.2f}"),
+                ("Skewness",             f"{skew_val:+.2f}"),
+                ("Excess Kurtosis",      f"{kurt_val:.2f}"),
+                ("Best Single Day",      f"+{best_day:.2f}%"),
+                ("Worst Single Day",     f"{worst_day:.2f}%"),
+                ("% Positive Days",      f"{pos_days_pct:.1f}%"),
+            ]
+            for stat, val in stats_rows:
+                st.markdown(
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                    f'padding:10px 16px;border-bottom:1px solid rgba(229,229,234,0.15);">'
+                    f'<span style="font-size:14px;color:#ffffff;opacity:0.85;">{stat}</span>'
+                    f'<span style="font-size:15px;font-weight:700;color:#ffffff;">{val}</span></div>',
+                    unsafe_allow_html=True,
+                )
