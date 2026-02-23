@@ -16,6 +16,16 @@
 #     data_quality dict returned alongside the summary.
 #   - A "Data As Of" field is derived from the most recent quarter-end
 #     in the revenue quarterly series and surfaced in the summary.
+#
+# Bug fixes (current version):
+#   - UFCF is now correctly computed as LFCF + interest×(1−t) instead
+#     of incorrectly aliasing LFCF, which produced identical values in
+#     both the LFCF and UFCF columns.
+#   - working_capital and capital_employed now use 'or' (not 'and') so
+#     that a single missing component returns NaN rather than silently
+#     substituting 0 via nan_to_zero and producing a misleading figure.
+#   - net_debt is now guarded: if debt is NaN the result is NaN, not
+#     0 - cash = -cash, which looked like genuine negative net debt.
 # ------------------------------------------------------------------
 
 from sec_engine.metrics import (
@@ -180,20 +190,28 @@ def build_company_summary(
     retained_earnings = nz(balance_data.get("retained_earnings"))
     ppe               = nz(balance_data.get("ppe"))
 
-    # nan_to_zero used here so that valid 0.0 balance-sheet values are
-    # preserved, unlike the prior (x or 0) pattern which treated 0.0
-    # as falsy and silently substituted zero for missing values.
+    # Guard: return NaN if EITHER component is missing.
+    # The prior 'and' condition only returned NaN when both were NaN,
+    # causing nan_to_zero to substitute 0 for the missing side and produce
+    # a misleading result (e.g. working_capital = 0 - current_liabilities).
     working_capital = (
         nan_to_zero(current_assets) - nan_to_zero(current_liabilities)
-        if not (np.isnan(current_assets) and np.isnan(current_liabilities))
+        if not (np.isnan(current_assets) or np.isnan(current_liabilities))
         else np.nan
     )
 
-    net_debt = nan_to_zero(debt) - nan_to_zero(cash)
+    # Guard: if debt is unknown, net_debt is unknown — don't produce -cash.
+    # nan_to_zero(debt) would give 0 when debt is missing, making net_debt
+    # appear negative for cash-rich companies with no reported debt data.
+    if not np.isnan(debt):
+        net_debt = nan_to_zero(debt) - nan_to_zero(cash)
+    else:
+        net_debt = np.nan
 
+    # Guard: return NaN if EITHER component is missing (same logic as working_capital).
     capital_employed = (
         nan_to_zero(total_assets) - nan_to_zero(current_liabilities)
-        if not (np.isnan(total_assets) and np.isnan(current_liabilities))
+        if not (np.isnan(total_assets) or np.isnan(current_liabilities))
         else np.nan
     )
 
@@ -214,9 +232,22 @@ def build_company_summary(
     rd_margin_val   = rd_margin(revenue, rd)
 
     # ── FCF ───────────────────────────────────────────────────────────────────
-    fcf_value = fcf(ocf, capex)
-    lfcf_value = fcf_value   # OCF is post-interest, so levered FCF = OCF - CapEx
-    ufcf_value = fcf_value   # Approximate; full UFCF needs interest tax shield add-back
+    fcf_value  = fcf(ocf, capex)
+    lfcf_value = fcf_value   # OCF is post-interest, so levered FCF = OCF − CapEx
+
+    # UFCF = LFCF + after-tax interest expense.
+    # Adding back interest×(1−t) converts the levered (post-interest) cash flow
+    # to an unlevered (pre-interest) figure, making it capital-structure-neutral.
+    # If interest_expense is unavailable we return NaN rather than silently
+    # treating it as 0 (which would make UFCF equal LFCF and mislead the user).
+    if (
+        not np.isnan(lfcf_value)
+        and not np.isnan(interest_expense)
+        and interest_expense != 0
+    ):
+        ufcf_value = lfcf_value + abs(interest_expense) * (1 - NOPAT_TAX_RATE)
+    else:
+        ufcf_value = np.nan  # Cannot compute without interest expense
 
     lfcf_margin_val  = lfcf_margin(revenue, lfcf_value)
     ufcf_margin_val  = ufcf_margin(revenue, ufcf_value)
@@ -252,8 +283,16 @@ def build_company_summary(
     total_debt_interest = total_debt_to_interest(debt, interest_expense)
     net_debt_interest   = net_debt_to_interest(net_debt, interest_expense)
     z_score = altman_z_score(
-        working_capital, total_assets, retained_earnings,
-        ebit, market_cap, total_liabilities, revenue,
+        working_capital,
+        total_assets,
+        retained_earnings,
+        ebit,
+        # Altman's X4 = Market Value of Equity / Total Liabilities.
+        # For public companies, market value of equity = market cap.
+        # This is intentionally market_cap, NOT book equity.
+        market_cap,
+        total_liabilities,
+        revenue,
     )
 
     # ── Growth — YoY ─────────────────────────────────────────────────────────
