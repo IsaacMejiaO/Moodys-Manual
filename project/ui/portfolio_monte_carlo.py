@@ -500,6 +500,7 @@ def render_portfolio_monte_carlo():
             label_visibility="collapsed",
             placeholder="AAPL\nMSFT\nNVDA\nAMZN\n...",
         )
+        st.markdown('<p class="config-hint">One ticker per line</p>', unsafe_allow_html=True)
 
         st.markdown('<p class="config-label">Bond / defensive</p>', unsafe_allow_html=True)
         bonds_input = st.text_input(
@@ -508,6 +509,7 @@ def render_portfolio_monte_carlo():
             label_visibility="collapsed",
             placeholder="VGIT",
         )
+        st.markdown('<p class="config-hint">Leave blank for equity-only</p>', unsafe_allow_html=True)
 
         st.markdown('<p class="config-label">Risk appetite</p>', unsafe_allow_html=True)
         risk_appetite = st.slider(
@@ -536,7 +538,8 @@ def render_portfolio_monte_carlo():
             label_visibility="collapsed",
         )
         st.markdown(
-            f'<p class="config-hint" style="margin-top:-6px;">',
+            f'<p class="config-hint" style="margin-top:-6px;">'
+            f'{years_back} years of price history</p>',
             unsafe_allow_html=True,
         )
 
@@ -549,6 +552,7 @@ def render_portfolio_monte_carlo():
 
         st.markdown('<p class="config-label">Expected returns</p>', unsafe_allow_html=True)
         st.markdown(
+            '<p class="config-hint">Annual return you expect per position</p>',
             unsafe_allow_html=True,
         )
         dcf_returns = {}
