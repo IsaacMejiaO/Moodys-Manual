@@ -482,9 +482,9 @@ def render_portfolio_monte_carlo():
         unsafe_allow_html=True,
     )
 
-    cfg_left, cfg_mid, cfg_right = st.columns([1.1, 1, 0.9], gap="large")
+    cfg_left, cfg_right = st.columns([1.1, 0.9], gap="large")
 
-    # ── Column 1: Your stocks ─────────────────────────────────────────────────
+    # ── Column 1: Holdings + Risk & horizon ──────────────────────────────────
     with cfg_left:
         st.markdown('<p class="config-label">Your stocks</p>', unsafe_allow_html=True)
         if "portfolio_stocks_input" not in st.session_state:
@@ -507,15 +507,12 @@ def render_portfolio_monte_carlo():
         )
         st.markdown('<p class="config-hint">Leave blank for equity-only</p>', unsafe_allow_html=True)
 
-    # ── Column 2: Risk & horizon ──────────────────────────────────────────────
-    with cfg_mid:
         st.markdown('<p class="config-label">Risk appetite</p>', unsafe_allow_html=True)
         risk_appetite = st.slider(
             "risk",
             min_value=0.0, max_value=1.0, value=0.75, step=0.05,
             label_visibility="collapsed",
         )
-        # Human-readable risk label
         risk_pct = int(risk_appetite * 100)
         risk_label = (
             "Very conservative" if risk_pct <= 20 else
@@ -526,11 +523,11 @@ def render_portfolio_monte_carlo():
         )
         st.markdown(
             f'<p class="config-hint" style="margin-top:-6px;">'
-            f'{risk_label} &nbsp;·&nbsp; {risk_pct}% equity / {100-risk_pct}% bonds</p>',
+            f'{risk_label} &nbsp;&middot;&nbsp; {risk_pct}% equity / {100-risk_pct}% bonds</p>',
             unsafe_allow_html=True,
         )
 
-        st.markdown('<p class="config-label" style="margin-top:10px;">Historical data</p>', unsafe_allow_html=True)
+        st.markdown('<p class="config-label">Historical data</p>', unsafe_allow_html=True)
         years_back = st.slider(
             "years",
             min_value=5, max_value=30, value=25, step=1,
@@ -542,7 +539,7 @@ def render_portfolio_monte_carlo():
             unsafe_allow_html=True,
         )
 
-    # ── Column 3: Expected returns per asset ─────────────────────────────────
+    # ── Column 2: Expected returns per asset ─────────────────────────────────
     with cfg_right:
         stocks = [s.strip().upper() for s in stocks_input.split("\n") if s.strip()]
         bonds  = [bonds_input.strip().upper()] if bonds_input.strip() else []
