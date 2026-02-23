@@ -14,11 +14,6 @@ A comprehensive equity analysis platform with:
 import sys
 import os
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-
-
-import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -93,26 +88,26 @@ if "loaded_sic_map" not in st.session_state:
 # Hardcoded default universe — loaded automatically on every startup.
 # Drop CustomScreener.csv next to app.py (or in ui/ or data/) to override.
 _DEFAULT_SCREENER_TICKERS = [
-    "NVDA","GOOG","GOOGL","MSFT","AMZN","AVGO","META","LLY","V","JNJ",
-    "ORCL","MA","MU","NFLX","PLTR","PM","CRM","APP","KLAC","ISRG",
-    "APH","AMGN","UBER","ANET","BKNG","SPGI","SCCO","INTU","BSX","SYK",
-    "NEM","HON","NOW","NEMCL","PGR","ADBE","PH","VRTX","ADP","MCO",
-    "HOOD","HWM","MRSH","MMC","WM","BAM","CDNS","TDG","MAR","ORLY",
-    "ABNB","EQIX","CTAS","MNST","RCL","SLB","MRVL","VRT","RSG","HLT",
-    "MSI","SPG","AZO","NDAQ","COIN","IDXX","URI","ADSK","FTNT","ZTS",
-    "PSA","CMG","BKR","FAST","ALL","PYPL","AME","MPWR","OKE","WDAY",
-    "MSCI","ROP","YUM","BSQKZ","FANG","HEI","HEI.A","RDDT","XYZ","FIX",
-    "PAYX","CPRT","WAB","LVS","RMD","FICO","VEEV","CCL","XYL","FISV",
-    "UI","EXR","VICI","ROL","VRSK","VIK","FOXA","FOX","CBOE","FTAI",
-    "DXCM","HUBB","TW","FSLR","BR","CINF","CW","TPL","VRSN","RGLD",
-    "RL","CPAY","INCY","SSNC","BWXT","PTC","UTHR","WWD","TYL","LII",
-    "HL","PINS","ZBH","MEDP","WES","IT","CRS","GEN","TTD","ITT","RBC",
-    "CDE","ULS","EVR","DECK","NXT","PEN","GDDY","JKHY","OHI","ERIE",
-    "GLPI","NBIX","HST","GMED","RMBS","DT","PR","BSY","EXEL","NYT",
-    "SPXC","STRL","FDS","BMRN","MANH","CART","EGP","LNWO","WTS","SOLS",
-    "KNSL","PJT","FRT","AM","MORN","PEGA","HLNE","AWI","CTRE","HALO",
-    "PAYC","CAVA","FR","NNN","PLNT","IDCC","APPF","DOCS","WING","ZWS",
-    "PCTY","CHDN","HESM","MSA","HQY","FSS","BYD","EXLS","DUOL",
+    "NVDA", "GOOG", "GOOGL", "MSFT", "AMZN", "AVGO", "META", "LLY", "V", "JNJ",
+    "ORCL", "MA", "MU", "NFLX", "PLTR", "PM", "CRM", "APP", "KLAC", "ISRG",
+    "APH", "AMGN", "UBER", "ANET", "BKNG", "SPGI", "SCCO", "INTU", "BSX", "SYK",
+    "NEM", "HON", "NOW", "PGR", "ADBE", "PH", "VRTX", "ADP", "MCO",
+    "HOOD", "HWM", "MMC", "WM", "BAM", "CDNS", "TDG", "MAR", "ORLY",
+    "ABNB", "EQIX", "CTAS", "MNST", "RCL", "SLB", "MRVL", "VRT", "RSG", "HLT",
+    "MSI", "SPG", "AZO", "NDAQ", "COIN", "IDXX", "URI", "ADSK", "FTNT", "ZTS",
+    "PSA", "CMG", "BKR", "FAST", "ALL", "PYPL", "AME", "MPWR", "OKE", "WDAY",
+    "MSCI", "ROP", "YUM", "FANG", "HEI", "RDDT", "FIX",
+    "PAYX", "CPRT", "WAB", "LVS", "RMD", "FICO", "VEEV", "CCL", "XYL", "FISV",
+    "UI", "EXR", "VICI", "ROL", "VRSK", "FOXA", "FOX", "CBOE", "FTAI",
+    "DXCM", "HUBB", "TW", "FSLR", "BR", "CINF", "CW", "TPL", "VRSN", "RGLD",
+    "RL", "CPAY", "INCY", "SSNC", "BWXT", "PTC", "UTHR", "WWD", "TYL", "LII",
+    "HL", "PINS", "ZBH", "MEDP", "WES", "IT", "CRS", "GEN", "TTD", "ITT", "RBC",
+    "CDE", "EVR", "DECK", "NXT", "PEN", "GDDY", "JKHY", "OHI", "ERIE",
+    "GLPI", "NBIX", "HST", "GMED", "RMBS", "DT", "PR", "BSY", "EXEL", "NYT",
+    "SPXC", "STRL", "FDS", "BMRN", "MANH", "CART", "EGP", "WTS",
+    "KNSL", "PJT", "FRT", "AM", "MORN", "PEGA", "HLNE", "AWI", "CTRE", "HALO",
+    "PAYC", "CAVA", "FR", "NNN", "PLNT", "IDCC", "APPF", "DOCS", "WING", "ZWS",
+    "PCTY", "CHDN", "HESM", "MSA", "HQY", "FSS", "BYD", "EXLS", "DUOL",
 ]
 
 _DEFAULT_SCREENER_CSV_PATHS = [
@@ -243,16 +238,31 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
         def get_ltm_from_quarterly(df, field_name):
             """
             Sum last 4 quarterly periods to produce LTM.
-            Returns NaN if fewer than 4 periods are available.
+
+            Returns NaN if:
+              - Fewer than 4 periods are available.
+              - The 4 quarters span more than ~380 days (non-contiguous data).
+                This mirrors the gap-check in sec_engine/ltm.py and prevents
+                silently summing 15-18 months of data when quarters are missing
+                or when a company changed fiscal year.
+
             yfinance returns columns in reverse-chronological order,
             so head(4) gives the 4 most recent periods.
             """
             if df is None or df.empty or field_name not in df.index:
                 return np.nan
-            values = df.loc[field_name].dropna().head(4)
-            if len(values) < 4:
+            row = df.loc[field_name].dropna()
+            # Columns are period-end dates (Timestamps) in reverse-chron order
+            row = row.head(4)
+            if len(row) < 4:
                 return np.nan
-            return float(values.sum())
+            # Gap check: the 4 column dates must span no more than ~380 days.
+            # Older period first (iloc[-1] is earliest since head(4) from reverse order).
+            dates = sorted(row.index)
+            span_days = (dates[-1] - dates[0]).days
+            if span_days > 380:
+                return np.nan
+            return float(row.sum())
 
         def get_latest_value(df, field_name):
             """Get most recent value from quarterly data"""
@@ -391,7 +401,8 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
             for key, value in sec_backup_ltm.items():
                 if pd.isna(ltm_data.get(key, np.nan)) and not pd.isna(value):
                     ltm_data[key] = value
-                    # SEC capex tags are defined as positive outflows — no sign flip needed
+                    # Only update capex_source when capex itself is being filled
+                    # from SEC. SEC tags are positive outflows — no sign flip needed.
                     if key == "capex":
                         _capex_source = "sec"
 
@@ -1143,4 +1154,3 @@ elif st.session_state["page"] == "performance":
 # FOOTER
 # =========================================================
 st.sidebar.markdown("---")
-
