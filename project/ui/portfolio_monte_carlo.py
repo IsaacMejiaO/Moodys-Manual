@@ -508,7 +508,6 @@ def render_portfolio_monte_carlo():
             label_visibility="collapsed",
             placeholder="VGIT",
         )
-        st.markdown('<p class="config-hint">Leave blank for equity-only</p>', unsafe_allow_html=True)
 
         st.markdown('<p class="config-label">Risk appetite</p>', unsafe_allow_html=True)
         risk_appetite = st.slider(
