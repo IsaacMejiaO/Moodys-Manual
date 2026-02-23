@@ -376,13 +376,12 @@ def _inject_css() -> None:
     </style>""", unsafe_allow_html=True)
 
 
-def _metric_card(label: str, value_str: str, color: str = "#ffffff",
-                 emoji: str = "", tooltip: str = "") -> str:
+def _metric_card(label: str, value_str: str, color: str = "#ffffff", tooltip: str = "") -> str:
     return f"""
 <div title="{tooltip}" style="background:transparent;border-radius:12px;padding:16px 18px;
      cursor:{'help' if tooltip else 'default'};border:1px solid {BORDER};height:100%;">
   <div style="font-size:11px;font-weight:600;letter-spacing:0.05em;color:#ffffff;
-              text-transform:uppercase;margin-bottom:6px;">{(emoji+' ') if emoji else ''}{label}</div>
+              text-transform:uppercase;margin-bottom:6px;">{label}</div>
   <div style="font-size:26px;font-weight:700;line-height:1.1;color:{color};">{value_str}</div>
   {f'<div style="font-size:11px;color:#ffffff;margin-top:6px;line-height:1.4;opacity:0.7;">{tooltip}</div>' if tooltip else ''}
 </div>"""
@@ -438,60 +437,93 @@ def render_portfolio_monte_carlo():
         unsafe_allow_html=True,
     )
 
-    # ── Inputs (always visible at top, collapsible) ───────────────────────────
-    with st.expander("⚙️  Configure & Run Optimizer", expanded=True):
-        left_col, right_col = st.columns([1, 1], gap="large")
+    # ── Configuration panel ───────────────────────────────────────────────────
+    with st.expander("Configure & Run Optimizer", expanded=True):
 
-        with left_col:
+        # Row 1: Holdings | Settings
+        col_holdings, col_settings = st.columns([1, 1], gap="large")
+
+        with col_holdings:
+            st.markdown(
+                '<p style="font-size:12px;font-weight:600;letter-spacing:0.06em;'
+                'text-transform:uppercase;color:#ffffff;margin:0 0 6px 0;">Holdings</p>',
+                unsafe_allow_html=True,
+            )
             if "portfolio_stocks_input" not in st.session_state:
                 st.session_state["portfolio_stocks_input"] = "ASML\nCVX\nGOOGL\nMSFT\nSTRL\nTSM"
-            current_ticker_text = st.session_state.get("portfolio_stocks_input", "")
-            visible_lines = max(6, min(20, len([ln for ln in current_ticker_text.splitlines() if ln.strip()]) + 2))
             stocks_input = st.text_area(
-                "Stock Tickers (one per line)",
+                "Equities — one ticker per line",
                 key="portfolio_stocks_input",
-                height=visible_lines * 24,
+                height=180,
+                label_visibility="collapsed",
+                placeholder="AAPL\nMSFT\nNVDA\n...",
             )
-            bonds_input = st.text_input("Bond / Defensive Ticker", value="VGIT")
+            bonds_input = st.text_input(
+                "Defensive / Bond ticker",
+                value="VGIT",
+                help="Leave blank to run an equity-only portfolio.",
+            )
 
-        with right_col:
-            col_a, col_b = st.columns(2)
-            with col_a:
-                mc_sims = st.number_input("MC Simulations", 1000, 10000, 3000, 500)
-            with col_b:
-                years_back = st.number_input("Years of Data", 5, 30, 25, 1)
-
+        with col_settings:
+            st.markdown(
+                '<p style="font-size:12px;font-weight:600;letter-spacing:0.06em;'
+                'text-transform:uppercase;color:#ffffff;margin:0 0 6px 0;">Settings</p>',
+                unsafe_allow_html=True,
+            )
             risk_appetite = st.slider(
                 "Risk Appetite",
                 0.0, 1.0, 0.75, 0.05,
-                help="0 = Conservative (bonds only), 1 = Aggressive (equity only)",
+                help="Moves the selected portfolio along the efficient frontier. "
+                     "0 = maximum bonds, 1 = 100% equity.",
             )
+            st.caption("0 = Conservative (bonds only)  ·  1 = Aggressive (equity only)")
 
-            stocks = [s.strip().upper() for s in stocks_input.split("\n") if s.strip()]
-            bonds = [bonds_input.strip().upper()] if bonds_input.strip() else []
-            assets = stocks + bonds
-
-            if assets:
-                st.markdown(
-                    '<p style="font-size:12px;font-weight:600;letter-spacing:0.05em;'
-                    'text-transform:uppercase;color:#ffffff;margin-bottom:6px;">Expected Returns</p>',
-                    unsafe_allow_html=True,
+            col_a, col_b = st.columns(2)
+            with col_a:
+                years_back = st.number_input(
+                    "Look-back (years)",
+                    min_value=5, max_value=30, value=25, step=1,
+                    help="How many years of historical price data to use for covariance estimation.",
                 )
-                n_cols = min(len(assets), 3)
-                dcf_returns = {}
-                for i in range(0, len(assets), n_cols):
-                    cols = st.columns(n_cols)
-                    for j, asset in enumerate(assets[i : i + n_cols]):
-                        with cols[j]:
-                            default_val = 0.12 if asset in stocks else 0.03
-                            dcf_returns[asset] = st.number_input(
-                                asset, 0.0, 1.0, default_val, 0.01,
-                                format="%.2f", key=f"dcf_{asset}",
-                            )
-            else:
-                dcf_returns = {}
+            with col_b:
+                mc_sims = st.number_input(
+                    "MC Simulations",
+                    min_value=500, max_value=10000, value=3000, step=500,
+                    help="Number of random portfolios plotted on the efficient frontier.",
+                )
 
-        run_button = st.button("▶  Run Optimization", type="primary", use_container_width=True)
+        # Derive tickers here so Expected Returns section can use them
+        stocks = [s.strip().upper() for s in stocks_input.split("\n") if s.strip()]
+        bonds  = [bonds_input.strip().upper()] if bonds_input.strip() else []
+        assets = stocks + bonds
+
+        # Row 2: Expected Returns (one compact number input per asset, full width)
+        if assets:
+            st.markdown(
+                '<p style="font-size:12px;font-weight:600;letter-spacing:0.06em;'
+                'text-transform:uppercase;color:#ffffff;margin:16px 0 6px 0;">Expected Annual Returns</p>'
+                '<p style="font-size:12px;color:#ffffff;opacity:0.6;margin:0 0 10px 0;">'
+                'Override the model\'s return assumption for each position (e.g. 0.12 = 12%).</p>',
+                unsafe_allow_html=True,
+            )
+            dcf_returns = {}
+            n_cols = min(len(assets), 6)
+            for i in range(0, len(assets), n_cols):
+                row_assets = assets[i : i + n_cols]
+                cols = st.columns(len(row_assets))
+                for j, asset in enumerate(row_assets):
+                    with cols[j]:
+                        default_val = 0.12 if asset in stocks else 0.03
+                        dcf_returns[asset] = st.number_input(
+                            asset, 0.0, 1.0, default_val, 0.01,
+                            format="%.2f", key=f"dcf_{asset}",
+                        )
+        else:
+            dcf_returns = {}
+
+        # Row 3: Run button — full width, bottom of panel
+        st.markdown('<div style="height:8px;"></div>', unsafe_allow_html=True)
+        run_button = st.button("Run Optimization", type="primary", use_container_width=True)
 
     if not assets:
         st.warning("Enter at least one ticker in the configurator above.")
@@ -667,91 +699,55 @@ def render_portfolio_monte_carlo():
 
     shared_color_map = ranked_blue_map(weights_nonzero * 100)
 
-    # ── Narrative banner (mirrors Performance page) ───────────────────────────
-    ret_sign    = "+" if port_return >= 0 else ""
-    risk_word   = ("conservative" if port_vol_val < 0.12
-                   else "moderate" if port_vol_val < 0.20 else "aggressive")
-    sharpe_word = ("excellent" if sharpe >= 2 else "good" if sharpe >= 1
-                   else "acceptable" if sharpe >= 0.5 else "below-average")
-    eq_pct      = int(weights[stocks_clean].sum() * 100) if stocks_clean else 0
-    narrative   = (
-        f"Your optimized portfolio holds **{len(weights_nonzero)} positions** "
-        f"with a **{eq_pct}% equity / {100-eq_pct}% bond** split. "
-        f"The model expects a **{ret_sign}{port_return*100:.1f}% annualized return** "
-        f"at **{port_vol_val*100:.1f}% volatility** — a {risk_word} risk profile. "
-        f"The Sharpe ratio of **{sharpe:.2f}** is considered {sharpe_word}."
-    )
-    st.markdown(
-        f'<div style="background:linear-gradient(135deg,rgba(10,124,255,0.15),rgba(10,124,255,0.08));'
-        f'border-radius:14px;padding:20px 24px;margin:16px 0 20px 0;border:1px solid rgba(10,124,255,0.4);">'
-        f'<div style="font-size:11px;font-weight:700;color:#ffffff;letter-spacing:0.08em;'
-        f'text-transform:uppercase;margin-bottom:8px;">Optimized Portfolio at a Glance</div>'
-        f'<div style="font-size:15px;color:#ffffff;line-height:1.7;">{narrative}</div></div>',
-        unsafe_allow_html=True,
-    )
-
     # ── KPI metric cards (top row) ────────────────────────────────────────────
     ret_color = UP if port_return >= 0 else DOWN
+    ret_sign  = "+" if port_return >= 0 else ""
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
         st.markdown(_metric_card("Expected Return", f"{ret_sign}{port_return*100:.1f}%",
-            ret_color, "📈", "Model-blended annualized expected return."), unsafe_allow_html=True)
+            ret_color, tooltip="Model-blended annualized expected return."), unsafe_allow_html=True)
     with c2:
         hist_color = UP if annual_ret >= 0 else DOWN
         st.markdown(_metric_card("Historical Return", f"{'+' if annual_ret>=0 else ''}{annual_ret*100:.1f}%",
-            hist_color, "📅", "Actual annualized return earned over the look-back window."), unsafe_allow_html=True)
+            hist_color, tooltip="Actual annualized return earned over the look-back window."), unsafe_allow_html=True)
     with c3:
         st.markdown(_metric_card("Volatility", f"{port_vol_val*100:.1f}%",
-            ORANGE if port_vol_val < 0.25 else DOWN, "〰️", "Annualized portfolio standard deviation."), unsafe_allow_html=True)
+            ORANGE if port_vol_val < 0.25 else DOWN, tooltip="Annualized portfolio standard deviation."), unsafe_allow_html=True)
     with c4:
         sh_color = UP if sharpe >= 1 else (ORANGE if sharpe >= 0.5 else DOWN)
         st.markdown(_metric_card("Sharpe Ratio", f"{sharpe:.2f}",
-            sh_color, "⚖️", "Return per unit of risk above a 2% risk-free rate. >1 is good."), unsafe_allow_html=True)
+            sh_color, tooltip="Return per unit of risk above a 2% risk-free rate. Above 1 is good."), unsafe_allow_html=True)
     with c5:
         st.markdown(_metric_card("CDaR (5%)", f"{port_cdar*100:.1f}%",
-            DOWN if port_cdar > 0.15 else ORANGE, "📉", "Conditional Drawdown at Risk — average of the 5% worst drawdowns."), unsafe_allow_html=True)
+            DOWN if port_cdar > 0.15 else ORANGE, tooltip="Average of the 5% worst drawdowns."), unsafe_allow_html=True)
     with c6:
         st.markdown(_metric_card("CVaR (5%)", f"{port_cvar*100:.1f}%",
-            DOWN if port_cvar > 0.03 else ORANGE, "🎲", "Expected daily loss in the worst 5% of days."), unsafe_allow_html=True)
+            DOWN if port_cvar > 0.03 else ORANGE, tooltip="Expected daily loss in the worst 5% of days."), unsafe_allow_html=True)
 
     _divider()
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Analytics"])
+    tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Volatility"])
 
     # ════════ TAB 0 — ALLOCATION ═════════════════════════════════════════════
     with tabs[0]:
         col_donut, col_risk = st.columns([1, 1], gap="medium")
 
         with col_donut:
-            _section_header("Holdings Mix", "Optimized weight for each position")
+            _section_header("Holdings Mix")
             st.plotly_chart(
                 plot_allocation_donut(weights_nonzero, color_map=shared_color_map),
                 width="stretch",
             )
 
         with col_risk:
-            _section_header("Contribution to Portfolio Risk", "How much each position drives overall volatility")
+            _section_header("Contribution to Portfolio Risk")
             st.plotly_chart(
                 plot_risk_contribution(weights, cov, color_map=shared_color_map),
                 width="stretch",
             )
 
         _divider()
-        _section_header("Position Detail", "Weight and risk breakdown per asset")
-        portfolio_variance = weights @ cov @ weights
-        marginal_contrib   = cov @ weights
-        risk_contrib       = weights * marginal_contrib / portfolio_variance
-        detail_rows = []
-        for asset in weights_nonzero.index:
-            detail_rows.append({
-                "Ticker":           asset,
-                "Type":             "Stock" if asset in stocks_clean else "Bond",
-                "Weight %":         f"{weights_nonzero[asset]*100:.1f}%",
-                "Risk Contrib %":   f"{risk_contrib.get(asset, 0)*100:.1f}%",
-            })
-        st.dataframe(pd.DataFrame(detail_rows), hide_index=True, use_container_width=True)
-
         s_label, s_color = _sharpe_verdict(sharpe)
         v_label, v_color = _vol_verdict(port_vol_val)
         ca, cb = st.columns(2)
@@ -770,28 +766,11 @@ def render_portfolio_monte_carlo():
 
     # ════════ TAB 1 — FRONTIER & RISK ════════════════════════════════════════
     with tabs[1]:
-        col_ef, col_corr = st.columns([1.1, 0.9], gap="medium")
-        with col_ef:
-            _section_header("Efficient Frontier", f"{mc_sims:,} Monte Carlo simulations · ★ = your portfolio")
-            st.plotly_chart(
-                plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol_val, port_return, eq_grid),
-                width="stretch",
-            )
-        with col_corr:
-            _section_header("Asset Correlation", "Lower correlations = better diversification")
-            # Rebuild returns for correlation from the stored port_series
-            try:
-                prices_corr = pd.concat([
-                    yf.Ticker(t).history(start=start, end=end)["Close"].rename(t)
-                    for t in weights_nonzero.index
-                ], axis=1).pct_change().dropna()
-                st.plotly_chart(plot_correlation_heatmap(prices_corr), width="stretch")
-            except Exception:
-                st.info("Correlation matrix unavailable — re-run optimization to refresh.")
-
-        _divider()
-        _section_header("Drawdown", "How far the portfolio fell from its previous peak")
-        st.plotly_chart(plot_drawdown(port_series), width="stretch")
+        _section_header("Efficient Frontier")
+        st.plotly_chart(
+            plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol_val, port_return, eq_grid),
+            width="stretch",
+        )
 
         _divider()
         col_cdar, col_cvar = st.columns(2)
@@ -814,23 +793,16 @@ def render_portfolio_monte_carlo():
 
     # ════════ TAB 2 — PERFORMANCE ════════════════════════════════════════════
     with tabs[2]:
-        _section_header(
-            "Cumulative Return vs S&P 500",
-            "Historical portfolio return if held from the start of the look-back window",
-        )
+        _section_header("Cumulative Return vs S&P 500")
         try:
             fig_cum = plot_cumulative_returns(port_series, spy_returns)
         except Exception:
             fig_cum = plot_cumulative_returns(port_series)
         st.plotly_chart(fig_cum, width="stretch")
 
-        _divider()
-        _section_header("Rolling 1-Year Volatility", "How the portfolio's risk changed over time")
-        st.plotly_chart(plot_rolling_volatility(port_series), width="stretch")
-
         if spy_returns is not None:
             _divider()
-            excess = port_series.mean() * 252 - spy_returns.mean() * 252
+            excess    = port_series.mean() * 252 - spy_returns.mean() * 252
             exc_color = UP if excess >= 0 else DOWN
             st.markdown(_verdict_card(
                 "Extra return vs S&P 500 (annualized)",
@@ -839,40 +811,7 @@ def render_portfolio_monte_carlo():
                 f"the S&P 500 by {abs(excess)*100:.1f} percentage points per year on a historical basis."
             ), unsafe_allow_html=True)
 
-    # ════════ TAB 3 — ANALYTICS ══════════════════════════════════════════════
+    # ════════ TAB 3 — VOLATILITY ═════════════════════════════════════════════
     with tabs[3]:
-        col_dist, col_stats = st.columns([1.1, 0.9], gap="medium")
-
-        with col_dist:
-            _section_header("Daily Return Distribution", "Shape of day-to-day return outcomes")
-            st.plotly_chart(plot_return_distribution(port_series), width="stretch")
-
-        with col_stats:
-            _section_header("Return Statistics")
-            from scipy.stats import kurtosis as _kurt, skew as _skew
-            ann_ret_pct  = annual_ret * 100
-            vol_pct      = port_vol_val * 100
-            skew_val     = float(_skew(port_series.dropna()))
-            kurt_val     = float(_kurt(port_series.dropna()))
-            best_day     = float(port_series.max()) * 100
-            worst_day    = float(port_series.min()) * 100
-            pos_days_pct = (port_series > 0).mean() * 100
-
-            stats_rows = [
-                ("Annualized Return",    f"{ann_ret_pct:+.2f}%"),
-                ("Annualized Volatility",f"{vol_pct:.2f}%"),
-                ("Sharpe Ratio",         f"{sharpe:.2f}"),
-                ("Skewness",             f"{skew_val:+.2f}"),
-                ("Excess Kurtosis",      f"{kurt_val:.2f}"),
-                ("Best Single Day",      f"+{best_day:.2f}%"),
-                ("Worst Single Day",     f"{worst_day:.2f}%"),
-                ("% Positive Days",      f"{pos_days_pct:.1f}%"),
-            ]
-            for stat, val in stats_rows:
-                st.markdown(
-                    f'<div style="display:flex;justify-content:space-between;align-items:center;'
-                    f'padding:10px 16px;border-bottom:1px solid rgba(229,229,234,0.15);">'
-                    f'<span style="font-size:14px;color:#ffffff;opacity:0.85;">{stat}</span>'
-                    f'<span style="font-size:15px;font-weight:700;color:#ffffff;">{val}</span></div>',
-                    unsafe_allow_html=True,
-                )
+        _section_header("Rolling 1-Year Volatility")
+        st.plotly_chart(plot_rolling_volatility(port_series), width="stretch")
