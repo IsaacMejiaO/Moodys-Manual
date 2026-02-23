@@ -500,7 +500,6 @@ def render_portfolio_monte_carlo():
             label_visibility="collapsed",
             placeholder="AAPL\nMSFT\nNVDA\nAMZN\n...",
         )
-        st.markdown('<p class="config-hint">One ticker per line</p>', unsafe_allow_html=True)
 
         st.markdown('<p class="config-label">Bond / defensive</p>', unsafe_allow_html=True)
         bonds_input = st.text_input(
