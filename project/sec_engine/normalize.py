@@ -15,6 +15,9 @@
 #   - "ebitda": kept for completeness but very few companies file this
 #     tag; the fallback EBIT + D&A computation in aggregation.py is the
 #     primary path.
+#   - "ebit": was a duplicate of "operating_income" (identical tag list).
+#     Now aliased programmatically at the bottom of this file so there
+#     is a single source of truth and no double-fetching of EDGAR data.
 # ---------------------------------------------------------
 
 GAAP_MAP = {
@@ -60,12 +63,10 @@ GAAP_MAP = {
         "OperatingIncome",
     ],
 
-    # Alias — same tags as operating_income; retained for any code that
-    # references "ebit" directly in GAAP_MAP.
-    "ebit": [
-        "OperatingIncomeLoss",
-        "OperatingIncome",
-    ],
+    # Alias — same tags as operating_income. Defined as a programmatic alias
+    # below the dict (not an inline duplicate) so there is only one tag list
+    # to maintain and so that callers using either key never double-fetch EDGAR.
+    # "ebit": <see alias below>
 
     "interest_expense": [
         "InterestExpense",
@@ -194,3 +195,9 @@ GAAP_MAP = {
         "RetainedEarningsAccumulatedDeficit",
     ],
 }
+
+# "ebit" is an alias for "operating_income" — they map to the same XBRL tags.
+# Using a reference here (not a copy) means updating "operating_income" tags
+# automatically keeps "ebit" in sync, and callers fetching both keys in a
+# loop will not issue duplicate EDGAR API calls for the same data.
+GAAP_MAP["ebit"] = GAAP_MAP["operating_income"]
