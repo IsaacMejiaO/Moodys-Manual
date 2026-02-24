@@ -379,6 +379,7 @@ def render_stock_chart(ticker, selected_period):
             x=hist_period.index, y=stock_indexed,
             mode="lines", name=f"{ticker} Indexed",
             line=dict(color=ret_color, width=3),
+            showlegend=False,
             hovertemplate=f"{ticker} Indexed: %{{y:+.1f}}%<extra></extra>",
         ), secondary_y=True)
 
@@ -398,6 +399,7 @@ def render_stock_chart(ticker, selected_period):
             x=sp500_period.index, y=sp500_indexed,
             mode="lines", name="S&P 500 Indexed",
             line=dict(color=ORANGE, width=3),
+            showlegend=False,
             hovertemplate="S&P 500 Indexed: %{y:+.1f}%<extra></extra>",
         ), secondary_y=True)
 
@@ -432,11 +434,8 @@ def render_stock_chart(ticker, selected_period):
     fig.update_layout(
         **_CHART_LAYOUT,
         height=350,
-        margin=dict(l=20, r=20, t=20, b=60),
-        legend=dict(
-            orientation="h", y=-0.18, x=0.5, xanchor="center",
-            bgcolor="rgba(0,0,0,0)", font=dict(color="#ffffff"),
-        ),
+        margin=dict(l=20, r=20, t=20, b=20),
+        showlegend=False,
     )
     st.plotly_chart(fig, width="stretch")
     return perf_return
@@ -547,50 +546,66 @@ def render_tearsheet(ticker: str):
     desc_col, tabs_col = st.columns([1, 1])
 
     with desc_col:
-        # ── Business description with multi-source fallback ───────────────────
-        # Priority: yfinance longBusinessSummary → SEC EDGAR entity description
-        # → synthesised summary from sector / industry / geography metadata.
-        desc = info.get("longBusinessSummary") or info.get("description") or ""
+        # ── Business description — 4-source fallback chain ────────────────────
+        # 1. yfinance longBusinessSummary  (richest — narrative paragraph)
+        # 2. yfinance description field    (some tickers expose this separately)
+        # 3. SEC EDGAR submissions         (plain registrant description)
+        # 4. Synthesised from structured   (always produces something useful)
+        desc = (info.get("longBusinessSummary") or "").strip()
+
+        if not desc:
+            desc = (info.get("description") or "").strip()
 
         if not desc and cik:
-            # SEC EDGAR submissions endpoint carries a plain-English description
-            # for many registrants that yfinance doesn't expose.
             try:
                 from sec_engine.sec_fetch import fetch_company_submissions
                 submissions = fetch_company_submissions(cik)
-                desc = submissions.get("description", "") or ""
+                desc = (submissions.get("description") or "").strip()
             except Exception:
                 desc = ""
 
         if not desc:
-            # Synthesise a minimal but useful summary from structured metadata
-            # so the panel is never blank.
-            name     = info.get("longName") or info.get("shortName") or ticker
-            sector   = info.get("sector", "")
-            industry = info.get("industry", "")
-            city     = info.get("city", "")
-            state    = info.get("state", "")
-            country  = info.get("country", "")
-            exchange = info.get("exchange", "")
+            # Always synthesise a useful paragraph from whatever structured
+            # metadata is available — never show a blank or error message.
+            name      = info.get("longName") or info.get("shortName") or ticker
+            sector    = info.get("sector", "")
+            industry  = info.get("industry", "")
+            city      = info.get("city", "")
+            state     = info.get("state", "")
+            country   = info.get("country", "")
+            exchange  = info.get("exchange", "")
             employees = info.get("fullTimeEmployees")
+            website   = info.get("website", "")
+            mkt_cap   = info.get("marketCap")
 
-            parts = [f"**{name}**"]
+            sentences = [f"**{name}**"]
+
             if industry and sector:
-                parts.append(f"is a {industry} company operating in the {sector} sector.")
+                sentences.append(f"is a {industry} company in the {sector} sector.")
             elif sector:
-                parts.append(f"operates in the {sector} sector.")
+                sentences.append(f"operates in the {sector} sector.")
             elif industry:
-                parts.append(f"is active in the {industry} industry.")
+                sentences.append(f"is active in the {industry} industry.")
+            else:
+                sentences.append("is a publicly traded company.")
 
             location_parts = [p for p in [city, state, country] if p]
             if location_parts:
-                parts.append(f"Headquartered in {', '.join(location_parts)}.")
-            if exchange:
-                parts.append(f"Listed on {exchange}.")
-            if employees:
-                parts.append(f"Employs approximately {employees:,} full-time staff.")
+                sentences.append(f"Headquartered in {', '.join(location_parts)}.")
 
-            desc = " ".join(parts) if len(parts) > 1 else f"No description available for {ticker}."
+            if exchange:
+                sentences.append(f"Listed on {exchange}.")
+
+            if mkt_cap:
+                sentences.append(f"Market capitalisation: {format_market_cap(mkt_cap)}.")
+
+            if employees:
+                sentences.append(f"Employs approximately {employees:,} full-time staff.")
+
+            if website:
+                sentences.append(f"Website: {website}.")
+
+            desc = " ".join(sentences)
 
         st.write(desc)
 
