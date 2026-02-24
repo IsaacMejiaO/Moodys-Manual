@@ -373,31 +373,13 @@ def render_stock_chart(ticker, selected_period):
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # Price — primary y-axis (left) with BLUE fill
-    if not hist_period.empty:
-        fig.add_trace(go.Scatter(
-            x=hist_period.index, y=hist_period["Close"],
-            mode="lines", name=f"{ticker} Price",
-            line=dict(color=BLUE, width=3),
-            fill="tozeroy", fillcolor="rgba(10,124,255,0.08)",
-            hovertemplate=f"{ticker} Price: $%{{y:.2f}}<extra></extra>",
-        ), secondary_y=False)
-
-        cur_price = hist_period["Close"].iloc[-1]
-        fig.add_trace(go.Scatter(
-            x=[hist_period.index[-1]], y=[cur_price],
-            mode="text",
-            text=[f"<b>${cur_price:.2f}</b>"], textposition="top left",
-            textfont=dict(size=10, color=BLUE, family="Arial Black"),
-            showlegend=False, hoverinfo="skip", name="",
-        ), secondary_y=False)
-
     # Indexed stock return — secondary y-axis (right), UP/DOWN colored
     if not stock_indexed.empty:
         fig.add_trace(go.Scatter(
             x=hist_period.index, y=stock_indexed,
             mode="lines", name=f"{ticker} Indexed",
-            line=dict(color=ret_color, width=2.5),
+            line=dict(color=ret_color, width=3),
+            showlegend=False,
             hovertemplate=f"{ticker} Indexed: %{{y:+.1f}}%<extra></extra>",
         ), secondary_y=True)
 
@@ -416,7 +398,8 @@ def render_stock_chart(ticker, selected_period):
         fig.add_trace(go.Scatter(
             x=sp500_period.index, y=sp500_indexed,
             mode="lines", name="S&P 500 Indexed",
-            line=dict(color=ORANGE, width=2.5),
+            line=dict(color=ORANGE, width=3),
+            showlegend=False,
             hovertemplate="S&P 500 Indexed: %{y:+.1f}%<extra></extra>",
         ), secondary_y=True)
 
@@ -437,25 +420,22 @@ def render_stock_chart(ticker, selected_period):
         tickformat="%b '%y" if selected_period in ("1M","3M","6M","YTD","1Y") else "%Y",
     )
     fig.update_yaxes(
-        title_text=f"{ticker} Price ($)", secondary_y=False,
-        showgrid=True, gridcolor="rgba(255,255,255,0.1)", zeroline=False,
-        tickformat="$.2f", tickfont=dict(color="#ffffff"),
-        title_font=dict(size=12, color=BLUE),
+        title_text="", secondary_y=False,
+        showgrid=False, zeroline=False,
+        ticklabels=False, showticklabels=False,
     )
     fig.update_yaxes(
         title_text="Indexed Performance (%)", secondary_y=True,
-        showgrid=False, zeroline=True, zerolinecolor="rgba(255,255,255,0.15)",
+        showgrid=True, gridcolor="rgba(255,255,255,0.1)",
+        zeroline=True, zerolinecolor="rgba(255,255,255,0.15)",
         tickformat="+.0f", tickfont=dict(color="#ffffff"),
         title_font=dict(size=12, color=ret_color),
     )
     fig.update_layout(
         **_CHART_LAYOUT,
         height=350,
-        margin=dict(l=20, r=20, t=20, b=60),
-        legend=dict(
-            orientation="h", y=-0.18, x=0.5, xanchor="center",
-            bgcolor="rgba(0,0,0,0)", font=dict(color="#ffffff"),
-        ),
+        margin=dict(l=20, r=20, t=20, b=20),
+        showlegend=False,
     )
     st.plotly_chart(fig, width="stretch")
     return perf_return
