@@ -59,12 +59,84 @@ SIC_INDEX_CACHE_FILE = Path(__file__).resolve().parent / ".cache" / "sic_index.j
 # SCORING WEIGHTS (Configurable)
 # ============================================================================
 SCORING_WEIGHTS = {
-    "business_description_similarity": 0.30,
-    "multiples_similarity": 0.25,
+    "business_description_similarity": 0.35,
+    "multiples_similarity": 0.20,
     "revenue_scale_similarity": 0.15,
     "profitability_similarity": 0.10,
     "return_correlation": 0.10,
     "liquidity_float_quality": 0.10,
+}
+
+# S&P 500 / large-cap seed list guaranteed into every candidate pool.
+# These are the most-compared names on CapIQ/Bloomberg and must never be
+# excluded by ETF-holdings gaps.  Organised by GICS sector.
+_SECTOR_SEED_UNIVERSE: Dict[str, List[str]] = {
+    "Technology": [
+        "AAPL","MSFT","NVDA","GOOGL","GOOG","META","AVGO","ORCL","AMD","INTC",
+        "QCOM","TXN","MU","AMAT","LRCX","KLAC","MRVL","ADI","NXPI","ON",
+        "CRM","NOW","ADBE","INTU","SNPS","CDNS","ANSS","PTC","CTSH","EPAM",
+        "IBM","HPQ","HPE","DELL","NTAP","STX","WDC","PSTG","ANET","CSCO",
+        "JNPR","FFIV","AKAM","NET","ZS","CRWD","PANW","OKTA","S","SNOW",
+        "DDOG","MDB","CFLT","HUBS","TEAM","GTLB","ZM","TWLO","PLTR","AI",
+        "PATH","APPN","PEGA","SMCI","FSLR","UBER","LYFT","ABNB","DASH",
+    ],
+    "Communication Services": [
+        "GOOGL","GOOG","META","NFLX","DIS","CMCSA","CHTR","VZ","T","TMUS",
+        "WBD","PARA","FOXA","FOX","NYT","IAC","MTCH","SNAP","PINS","RDDT",
+        "SPOT","TTWO","EA","RBLX","U",
+    ],
+    "Consumer Cyclical": [
+        "AMZN","TSLA","HD","MCD","NKE","LOW","SBUX","TJX","BKNG","MAR",
+        "HLT","GM","F","RIVN","APTV","LEA","BWA","LVS","MGM","WYNN",
+        "RCL","CCL","NCLH","DKNG","PENN","PHM","LEN","DHI","TOL","NVR",
+        "ORLY","AZO","GPC","TSCO","DG","DLTR","WMT","TGT","COST",
+        "BBY","ROST","BURL","URBN","ANF","AEO","RL",
+    ],
+    "Consumer Defensive": [
+        "WMT","COST","PG","KO","PEP","PM","MO","MDLZ","CL","GIS","K",
+        "CPB","HRL","CAG","MKC","CHD","CLX","EL","KVUE","KHC","STZ",
+        "TAP","SAM","CELH","MNST","KDP",
+    ],
+    "Healthcare": [
+        "JNJ","LLY","ABT","TMO","MRK","AZN","BMY","AMGN","GILD","VRTX",
+        "REGN","BIIB","MRNA","BNTX","PFE","NVO","NVS","ABBV","MDT","SYK",
+        "BSX","EW","ISRG","ZBH","BAX","BDX","DHR","A","WAT","IQV","CVS",
+        "WBA","MCK","ABC","CAH","HUM","UNH","CI","ELV","CNC","MOH","HCA",
+        "THC","UHS","INCY","ALNY","IONS","SRPT","EXEL","BMRN",
+    ],
+    "Financials": [
+        "BRK-B","JPM","BAC","WFC","C","GS","MS","BLK","SCHW","AXP","COF",
+        "DFS","SYF","ALLY","MET","PRU","AFL","AIG","TRV","PGR","CB","ALL",
+        "HIG","ICE","CME","CBOE","NDAQ","V","MA","PYPL","FIS","FI","GPN",
+        "SPGI","MCO","MSCI","FDS","VRSK","SOFI","NU","AFRM",
+    ],
+    "Industrials": [
+        "GE","HON","MMM","RTX","LMT","BA","GD","NOC","TDG","TXT","HEI",
+        "KTOS","SAIC","LDOS","CACI","CAT","DE","PCAR","CMI","AGCO","ITW",
+        "EMR","ETN","ROK","PH","IR","XYL","GNRC","IDEX","GWW","MSC","FAST",
+        "SNA","SWK","TT","CARR","OTIS","JCI","UPS","FDX","EXPD","CHRW",
+        "XPO","SAIA","ODFL","JBHT","KNX","UAL","DAL","AAL","LUV","CSX",
+        "UNP","NSC","WAB",
+    ],
+    "Energy": [
+        "XOM","CVX","COP","EOG","SLB","OXY","HAL","BKR","DVN","HES",
+        "FANG","MRO","APA","VLO","MPC","PSX","EQT","RRC","AR","WMB",
+        "ET","KMI","EPD","OKE","TRP","ENB",
+    ],
+    "Basic Materials": [
+        "LIN","APD","ECL","DD","DOW","LYB","EMN","CE","NEM","GOLD","AEM",
+        "NUE","STLD","CLF","AA","FCX","SCCO","ALB","SQM","MLM","VMC",
+        "CRH","EXP","PKG","IP","WRK",
+    ],
+    "Real Estate": [
+        "AMT","PLD","EQIX","CCI","SPG","EQR","AVB","MAA","UDR","CPT",
+        "ESS","INVH","NNN","O","WPC","ADC","VICI","GLPI","BXP","SLG",
+        "CBRE","JLL","VTR","PEAK","WELL","PSA","EXR","CUBE","DLR",
+    ],
+    "Utilities": [
+        "NEE","DUK","SO","D","EXC","AEP","SRE","PCG","ED","XEL","WEC",
+        "DTE","CMS","LNT","EVRG","ES","ETR","PPL","EIX","PNW","AWK","WTRG",
+    ],
 }
 
 CIK_MAP_GLOBAL = load_full_cik_map()
@@ -806,22 +878,21 @@ def discover_industry_peers_from_yfinance(
     discovered_tickers = []
 
     try:
-        # Method: Get similar companies via industry ETFs
+        # Method 1: Get holdings from sector ETFs
         industry_etf_map = {
-            "Technology": ["XLK", "VGT", "QQQ"],
-            "Healthcare": ["XLV", "VHT", "IHI"],
-            "Financials": ["XLF", "VFH", "KBE"],
-            "Consumer Cyclical": ["XLY", "VCR"],
-            "Consumer Defensive": ["XLP", "VDC"],
-            "Energy": ["XLE", "VDE"],
-            "Industrials": ["XLI", "VIS"],
-            "Basic Materials": ["XLB", "VAW"],
-            "Real Estate": ["XLRE", "VNQ"],
-            "Communication Services": ["XLC", "VOX"],
-            "Utilities": ["XLU", "VPU"]
+            "Technology": ["XLK", "VGT", "QQQ", "SOXX", "SMH", "IGV", "SKYY", "BUG"],
+            "Healthcare": ["XLV", "VHT", "IHI", "IBB", "XBI", "ARKG", "PSCH"],
+            "Financials": ["XLF", "VFH", "KBE", "KIE", "KBWP", "IAI", "KCE"],
+            "Consumer Cyclical": ["XLY", "VCR", "CARZ", "IBUY", "ONLN"],
+            "Consumer Defensive": ["XLP", "VDC", "PBJ"],
+            "Energy": ["XLE", "VDE", "OIH", "AMLP", "MLPA"],
+            "Industrials": ["XLI", "VIS", "ITA", "XAR", "DFEN", "JETS"],
+            "Basic Materials": ["XLB", "VAW", "GDX", "GDXJ", "SIL"],
+            "Real Estate": ["XLRE", "VNQ", "IYR", "REM", "MORT"],
+            "Communication Services": ["XLC", "VOX", "FIVG", "WCLD"],
+            "Utilities": ["XLU", "VPU", "FUTY", "UTES"]
         }
 
-        # Get holdings from sector ETFs
         sector_etfs = industry_etf_map.get(sector, [])
         for etf_ticker in sector_etfs:
             try:
@@ -839,17 +910,45 @@ def discover_industry_peers_from_yfinance(
 
                     if not holdings and isinstance(funds_data, dict):
                         maybe_holdings = funds_data.get("holdings", [])
-                        for holding in maybe_holdings[:75]:
+                        for holding in maybe_holdings[:100]:
                             symbol = str(holding.get("symbol", "")).strip().upper()
                             if symbol:
                                 holdings.append(symbol)
 
-                    for symbol in holdings[:75]:
-                        ticker = str(symbol).strip().upper()
-                        if ticker and ticker not in discovered_tickers:
-                            discovered_tickers.append(ticker)
-            except:
+                    for symbol in holdings[:100]:
+                        t = str(symbol).strip().upper()
+                        if t and t not in discovered_tickers:
+                            discovered_tickers.append(t)
+            except Exception:
                 continue
+
+        # Method 2: yfinance screener — query by sector/industry directly.
+        # This surfaces companies not in any ETF top-holdings list.
+        try:
+            screener = yf.Screener()
+            body = {
+                "offset": 0,
+                "size": 100,
+                "sortField": "marketcap",
+                "sortType": "DESC",
+                "quoteType": "EQUITY",
+                "query": {
+                    "operator": "AND",
+                    "operands": [
+                        {"operator": "eq", "operands": ["sector", sector]},
+                    ],
+                },
+                "userId": "",
+                "userIdType": "guid",
+            }
+            response = screener.set_body(body).fetch()
+            quotes = response.get("quotes", []) if isinstance(response, dict) else []
+            for q in quotes:
+                sym = str(q.get("symbol", "")).strip().upper()
+                if sym and sym not in discovered_tickers:
+                    discovered_tickers.append(sym)
+        except Exception:
+            pass
 
     except Exception:
         pass
@@ -1098,6 +1197,137 @@ def calculate_weighted_composite_score(
 
 
 # ============================================================================
+# STRUCTURAL ANALOGUES — cross-sector peers analysts always compare
+# ============================================================================
+
+def _get_structural_analogues(ticker: str, industry: str, sector: str) -> List[str]:
+    """
+    Return a curated list of tickers that analysts structurally compare to
+    companies in this industry/sector, even when they span different GICS codes.
+
+    Examples:
+    - Semiconductor designers → also compare to semiconductor equipment (AMAT, LRCX, ASML)
+    - Cloud hyperscalers → also compare to CDN/networking (ANET, CSCO)
+    - EV makers → also compare to traditional OEM and battery suppliers
+    - Streaming → also compare to traditional media and gaming
+
+    This replicates the "related companies" and "cross-industry comp" tab that
+    CapIQ/Bloomberg surface alongside the primary peer set.
+    """
+    analogues: List[str] = []
+    ind_lower = (industry or "").lower()
+    sec_lower = (sector or "").lower()
+
+    # ── Semiconductors ────────────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("semiconductor", "chip", "integrated circuit")):
+        analogues += ["NVDA","AMD","INTC","QCOM","AVGO","TXN","MU","MRVL","ADI",
+                      "NXPI","ON","AMAT","LRCX","KLAC","ASML","SNPS","CDNS","ARM"]
+
+    # ── Semiconductor Equipment ───────────────────────────────────────────────
+    if any(k in ind_lower for k in ("semiconductor equipment", "wafer", "etch", "deposition")):
+        analogues += ["AMAT","LRCX","KLAC","ASML","TER","ONTO","FORM","ACMR",
+                      "NVDA","AMD","INTC","TSM","SMCI"]
+
+    # ── Cloud / SaaS / Enterprise Software ───────────────────────────────────
+    if any(k in ind_lower for k in ("software", "saas", "cloud", "application")):
+        analogues += ["MSFT","GOOGL","AMZN","CRM","NOW","ADBE","INTU","ORCL",
+                      "SAP","SNOW","DDOG","MDB","HUBS","TEAM","WDAY","ZM","PANW"]
+
+    # ── Networking / Cybersecurity ────────────────────────────────────────────
+    if any(k in ind_lower for k in ("network", "cybersecurity", "security", "firewall")):
+        analogues += ["CSCO","ANET","JNPR","PANW","CRWD","ZS","FTNT","NET",
+                      "OKTA","S","TENB","QLYS","RPD"]
+
+    # ── AI / Machine Learning Infrastructure ─────────────────────────────────
+    if any(k in ind_lower for k in ("artificial intelligence", "machine learning", "data center")):
+        analogues += ["NVDA","AMD","INTC","SMCI","DELL","HPE","ANET","CSCO",
+                      "MSFT","GOOGL","AMZN","META","PLTR","AI","C3AI"]
+
+    # ── Internet / E-Commerce ─────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("internet", "e-commerce", "online retail", "marketplace")):
+        analogues += ["AMZN","GOOGL","META","NFLX","BKNG","ABNB","DASH","UBER",
+                      "LYFT","ETSY","EBAY","SHOP","MELI","SE","CPNG","JD","BABA"]
+
+    # ── Streaming / Digital Media ─────────────────────────────────────────────
+    if any(k in ind_lower for k in ("streaming", "media", "entertainment", "content")):
+        analogues += ["NFLX","DIS","CMCSA","WBD","PARA","SPOT","TTWO","EA",
+                      "RBLX","U","SNAP","PINS","META","GOOGL","RDDT"]
+
+    # ── Electric Vehicles ─────────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("electric vehicle", "ev ", "autonomous", "battery")):
+        analogues += ["TSLA","RIVN","LCID","NIO","LI","XPEV","GM","F","STLA",
+                      "TM","HMC","APTV","LEA","ALB","SQM","LTHM","LAC"]
+
+    # ── Biotech / Pharmaceuticals ─────────────────────────────────────────────
+    if any(k in ind_lower for k in ("biotech", "biopharmaceutical", "drug", "therapeutics")):
+        analogues += ["AMGN","GILD","VRTX","REGN","BIIB","MRNA","BNTX","ABBV",
+                      "LLY","PFE","MRK","BMY","AZN","NVO","INCY","ALNY","IONS",
+                      "SRPT","EXEL","BMRN","RARE","UTHR"]
+
+    # ── Medical Devices ───────────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("medical device", "medical equipment", "diagnostic", "surgical")):
+        analogues += ["MDT","SYK","BSX","EW","ISRG","ZBH","BAX","BDX","DHR",
+                      "A","WAT","DXCM","PODD","TNDM","NVCR","ILMN","EXAS"]
+
+    # ── Managed Care / Health Insurance ──────────────────────────────────────
+    if any(k in ind_lower for k in ("managed care", "health insurance", "health plan")):
+        analogues += ["UNH","CI","ELV","HUM","CNC","MOH","CVS","WBA"]
+
+    # ── Banks / Financial Services ────────────────────────────────────────────
+    if any(k in ind_lower for k in ("bank", "financial services", "lending", "mortgage")):
+        analogues += ["JPM","BAC","WFC","C","GS","MS","USB","PNC","TFC","FITB",
+                      "HBAN","CFG","KEY","RF","ZION","WBS","COLB","EWBC"]
+
+    # ── Asset Management ──────────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("asset management", "investment management", "fund")):
+        analogues += ["BLK","SCHW","MS","GS","AMP","IVZ","BEN","TROW","WDR",
+                      "LM","AMG","VCTR","APAM","STEP","HLNE","ARCC","FSK"]
+
+    # ── Payments / Fintech ────────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("payment", "transaction", "fintech", "credit card")):
+        analogues += ["V","MA","PYPL","AXP","COF","DFS","SYF","FIS","FI","GPN",
+                      "FOUR","WEX","PAYO","AFRM","SOFI","NU","ADYEY","SQ","BILL"]
+
+    # ── Insurance ─────────────────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("insurance", "reinsurance", "underwriting")):
+        analogues += ["BRK-B","PGR","CB","ALL","TRV","HIG","AFL","MET","PRU",
+                      "AIG","MKL","RE","CINF","WRB","RNR","EG","ACGL"]
+
+    # ── Oil & Gas Exploration ─────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("oil", "gas", "exploration", "production", "e&p")):
+        analogues += ["XOM","CVX","COP","EOG","DVN","HES","FANG","MRO","APA",
+                      "OXY","OVV","SM","MTDR","CTRA","PDCE","ESTE","VTLE"]
+
+    # ── Oil Services ──────────────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("oil field", "drilling", "oilfield services")):
+        analogues += ["SLB","HAL","BKR","NOV","WTTR","NINE","OII","LBRT","PUMP"]
+
+    # ── Aerospace & Defense ───────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("aerospace", "defense", "military", "missile", "aircraft")):
+        analogues += ["LMT","RTX","NOC","GD","BA","L3H","HWM","TDG","TXT",
+                      "HEI","KTOS","BWXT","CW","DRS","SAIC","LDOS","CACI"]
+
+    # ── Logistics / Supply Chain ──────────────────────────────────────────────
+    if any(k in ind_lower for k in ("logistics", "freight", "trucking", "shipping", "supply chain")):
+        analogues += ["UPS","FDX","EXPD","CHRW","XPO","SAIA","ODFL","JBHT",
+                      "KNX","WERN","ARCB","GXO","RXO","ECHO","FWRD"]
+
+    # ── Renewable Energy ──────────────────────────────────────────────────────
+    if any(k in ind_lower for k in ("solar", "wind", "renewable", "clean energy")):
+        analogues += ["NEE","ENPH","SEDG","FSLR","ARRY","RUN","SPWR","CSIQ",
+                      "JKS","DQ","BE","PLUG","BLDP","HYLN","EVGO","BLNK"]
+
+    # Remove duplicates and the target itself
+    seen = set()
+    result = []
+    for t in analogues:
+        if t != ticker and t not in seen:
+            seen.add(t)
+            result.append(t)
+    return result
+
+
+# ============================================================================
 # MAIN PEER DISCOVERY FUNCTION (UPGRADED)
 # ============================================================================
 
@@ -1166,29 +1396,70 @@ def discover_peers_capital_iq_style(
     )
     candidate_tickers.update(industry_peers)
 
+    # 2b2. Inject curated sector seed universe — guarantees that the biggest
+    #       names in each sector (S&P 500 / Russell 1000) are always considered,
+    #       regardless of ETF holdings gaps.
+    seed_peers = _SECTOR_SEED_UNIVERSE.get(target_sector, [])
+    candidate_tickers.update([t for t in seed_peers if t != ticker.upper()])
+
     # 2c. UPGRADED: Discover via deterministic SIC index
     cik_map = load_full_cik_map()
     cik = cik_map.get(ticker)
-    if cik and len(candidate_tickers) < 180:
+    if cik and len(candidate_tickers) < 250:
         try:
             submissions = fetch_company_submissions(cik)
             sic = submissions.get('sic', '')
             if sic:
-                sic_peers = get_peers_by_sic_deterministic(sic, max_results=200)
+                sic_peers = get_peers_by_sic_deterministic(sic, max_results=250)
                 candidate_tickers.update(sic_peers)
         except:
             pass
 
+    # 2d. Cross-sector structural analogues — companies that analysts always
+    #     compare despite different GICS sectors (e.g. semiconductor equipment
+    #     vs chip designers, cloud infra vs SaaS, etc.).  Derived from the
+    #     target's industry keyword so it adapts dynamically.
+    candidate_tickers.update(
+        _get_structural_analogues(ticker.upper(), target_industry, target_sector)
+    )
+
     candidate_tickers.discard(ticker.upper())
 
     # Step 3: Screen candidates (progressive relaxation)
+    # ── Adaptive market-cap bands ──────────────────────────────────────────
+    # Fixed 0.25×–4× ratio bands break for mega-caps (NVDA at $3T would
+    # require peers ≥ $750B, instantly excluding GOOGL at $2T) and for
+    # micro-caps (a $500M company would exclude a $150M peer that analysts
+    # routinely compare it to).
+    #
+    # Capital IQ uses log-scale proximity: companies within ±1.5 log-deciles
+    # are comparable regardless of absolute size.  We replicate this with
+    # an adaptive ratio that widens for large companies and narrows for small
+    # ones, matching the actual analyst workflow.
+    def _adaptive_cap_tiers(market_cap: float):
+        """Return (min_ratio, max_ratio) tuned to the company's size tier."""
+        if market_cap >= 500e9:       # Mega-cap: very wide — NVDA vs MSFT vs GOOGL
+            return 0.08, 12.0
+        elif market_cap >= 50e9:      # Large-cap: wide
+            return 0.12, 8.0
+        elif market_cap >= 10e9:      # Mid-large: standard
+            return 0.15, 6.5
+        elif market_cap >= 2e9:       # Mid-cap
+            return 0.20, 5.0
+        elif market_cap >= 500e6:     # Small-cap
+            return 0.25, 4.0
+        else:                         # Micro-cap: tight but still ±2 deciles
+            return 0.30, 3.5
+
+    base_min_r, base_max_r = _adaptive_cap_tiers(target_profile.get("market_cap", 0))
+
     if screening_criteria is not None:
         criteria_tiers = [screening_criteria]
     else:
         criteria_tiers = [
             {
-                "market_cap_min_ratio": 0.25,
-                "market_cap_max_ratio": 4.0,
+                "market_cap_min_ratio": base_min_r,
+                "market_cap_max_ratio": base_max_r,
                 "same_country_only": False,
                 "min_avg_volume": 100000,
                 "require_financials": True,
@@ -1196,25 +1467,27 @@ def discover_peers_capital_iq_style(
                 "same_sector_required": False,
                 "same_industry_preferred": True,
             },
+            # Tier 2: relax financials requirement, keep liquidity bar
             {
-                "market_cap_min_ratio": 0.15,
-                "market_cap_max_ratio": 7.0,
+                "market_cap_min_ratio": base_min_r * 0.6,
+                "market_cap_max_ratio": base_max_r * 1.5,
                 "same_country_only": False,
                 "min_avg_volume": 50000,
-                "require_financials": True,
+                "require_financials": False,
                 "exclude_otc": True,
                 "same_sector_required": False,
                 "same_industry_preferred": True,
             },
+            # Tier 3: widest net — used only if < min_peers found above
             {
-                "market_cap_min_ratio": 0.10,
-                "market_cap_max_ratio": 10.0,
+                "market_cap_min_ratio": base_min_r * 0.3,
+                "market_cap_max_ratio": base_max_r * 2.5,
                 "same_country_only": False,
                 "min_avg_volume": 25000,
                 "require_financials": False,
                 "exclude_otc": True,
                 "same_sector_required": False,
-                "same_industry_preferred": True,
+                "same_industry_preferred": False,
             },
         ]
 
@@ -1280,17 +1553,12 @@ def discover_peers_capital_iq_style(
     # Sort by composite score
     enhanced_peers.sort(key=lambda x: x["composite_score"], reverse=True)
 
-    # Step 5: Prioritize same-industry/same-sector
-    def _bucket(peer: Dict) -> int:
-        if peer.get("industry") == target_industry and target_industry:
-            return 0
-        if peer.get("sector") == target_sector and target_sector:
-            return 1
-        return 2
-
-    enhanced_peers.sort(
-        key=lambda p: (_bucket(p), -float(p.get("composite_score", 0.0)))
-    )
+    # Sort purely by composite score — same-industry peers naturally surface at
+    # the top because business_description_similarity (35%) and sector/industry
+    # bonuses in the base screening score already reward them.  A hard bucket
+    # sort here would bury high-quality cross-industry comparables that analysts
+    # routinely use (e.g., NVDA vs TSMC in semiconductors vs comms).
+    enhanced_peers.sort(key=lambda x: -float(x.get("composite_score", 0.0)))
 
     result = enhanced_peers[:max_peers]
 
@@ -1336,5 +1604,7 @@ __all__ = [
     'get_revenue_cagr_from_sec',
     'build_complete_sic_index',
     'calculate_float_quality_score',
+    '_get_structural_analogues',
+    '_SECTOR_SEED_UNIVERSE',
     'SCORING_WEIGHTS',
 ]
