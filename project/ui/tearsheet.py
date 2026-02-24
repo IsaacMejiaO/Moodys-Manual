@@ -610,12 +610,175 @@ def render_tearsheet(ticker: str):
         st.write(desc)
 
     with tabs_col:
-        # ── Tabbed Interface (completely unchanged from original) ─────────────────
-        # st.tabs() has no `key` parameter, so Streamlit always resets it to
-        # tab index 0 ("Income Statement") on every rerun — including the rerun
-        # triggered when the user changes a selectbox inside any other tab.
-        # Fix: persist the active tab in session_state using a keyed radio widget
-        # styled as tab buttons, which survives reruns correctly.
+        tabs_host = st.container()
+
+    st.markdown("")
+
+    # ── Stock Performance ─────────────────────────────────────────────────────
+
+    perf_period_options = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
+    selected_period = st.radio(
+        "Select Period",
+        options=perf_period_options,
+        index=4,
+        horizontal=True,
+        key="period_selector",
+        label_visibility="collapsed",
+    )
+
+    perf_return = render_stock_chart(ticker, selected_period)
+
+    # ── LTM calculations (unchanged) ──────────────────────────────────────────
+    def get_ltm_sum(df, field_name):
+        if df is None or df.empty or field_name not in df.index:
+            return np.nan
+        values = df.loc[field_name].head(4)
+        if len(values) < 4:
+            return np.nan
+        return float(values.sum())
+
+    def get_latest_q(df, field_name):
+        if df is None or df.empty or field_name not in df.index:
+            return np.nan
+        return float(df.loc[field_name].iloc[0])
+
+    revenue      = get_ltm_sum(q_income,   "Total Revenue")
+    gross_profit = get_ltm_sum(q_income,   "Gross Profit")
+    ebit         = get_ltm_sum(q_income,   "Operating Income")
+    ebitda       = get_ltm_sum(q_income,   "EBITDA")
+    net_income   = get_ltm_sum(q_income,   "Net Income")
+    ocf          = get_ltm_sum(q_cashflow, "Operating Cash Flow")
+    capex        = get_ltm_sum(q_cashflow, "Capital Expenditure")
+    fcf          = ocf - capex if is_valid_number(ocf) and is_valid_number(capex) else np.nan
+
+    current_assets      = get_latest_q(q_balance, "Current Assets")
+    current_liabilities = get_latest_q(q_balance, "Current Liabilities")
+    inventory           = get_latest_q(q_balance, "Inventory")
+    total_debt          = get_latest_q(q_balance, "Total Debt")
+    equity              = get_latest_q(q_balance, "Stockholders Equity")
+    total_assets        = get_latest_q(q_balance, "Total Assets")
+
+    # SEC fallback
+    if cik and (pd.isna(revenue) or pd.isna(ebitda)):
+        try:
+            facts = fetch_company_facts(cik)
+            if pd.isna(revenue):
+                rev_series = extract_quarterly_series(facts, GAAP_MAP.get("revenue", []))
+                if not rev_series.empty:
+                    revenue = float(rev_series.sort_index().iloc[-1])
+            if pd.isna(ebitda):
+                ebitda_series = extract_quarterly_series(facts, GAAP_MAP.get("ebitda", []))
+                if not ebitda_series.empty:
+                    ebitda = float(ebitda_series.sort_index().iloc[-1])
+        except Exception:
+            pass
+
+    # Derived ratios
+    gross_margin   = safe_divide(gross_profit, revenue)
+    ebit_margin    = safe_divide(ebit,         revenue)
+    ebitda_margin  = safe_divide(ebitda,       revenue)
+    net_margin_r   = safe_divide(net_income,   revenue)
+    roa            = safe_divide(net_income,   total_assets)
+    roe            = safe_divide(net_income,   equity)
+    roic           = safe_divide(ebit, (total_debt or 0) + (equity or 0)) if is_valid_number(ebit) else None
+    current_ratio  = safe_divide(current_assets, current_liabilities)
+    quick_assets   = current_assets - inventory if is_valid_number(inventory) else current_assets
+    quick_ratio    = safe_divide(quick_assets, current_liabilities)
+    debt_to_equity = safe_divide(total_debt, equity)
+
+    eps        = info.get("trailingEps")
+    pe         = info.get("trailingPE")
+    wk_low     = info.get("fiftyTwoWeekLow")
+    wk_high    = info.get("fiftyTwoWeekHigh")
+    market_cap = info.get("marketCap")
+
+    # ── Key Financials — restyled with _metric_card ───────────────────────────
+
+    def _pct(v):
+        return f"{v*100:.1f}%" if is_valid_number(v) else "N/A"
+
+    def _x(v):
+        return f"{v:.2f}x" if is_valid_number(v) else "N/A"
+
+    def _margin_color(v):
+        if not is_valid_number(v): return GREY
+        return UP if v > 0.10 else (ORANGE if v > 0 else DOWN)
+
+    def _ratio_color(v, good, ok):
+        if not is_valid_number(v): return GREY
+        return UP if v >= good else (ORANGE if v >= ok else DOWN)
+
+    def _de_color(v):
+        if not is_valid_number(v): return GREY
+        return UP if v < 1 else (ORANGE if v < 2 else DOWN)
+
+    # Row label helper
+    def _row_label(text):
+        st.markdown(
+            f'<div style="font-size:11px;font-weight:700;color:#ffffff;letter-spacing:0.08em;'
+            f'text-transform:uppercase;margin:16px 0 8px 0;opacity:0.7;">{text}</div>',
+            unsafe_allow_html=True)
+
+    def _render_metric_grid(items, cols=3):
+        for i in range(0, len(items), cols):
+            row = items[i:i + cols]
+            row_cols = st.columns(cols)
+            for col, item in zip(row_cols, row):
+                with col:
+                    st.markdown(
+                        _metric_card(item["label"], item["value"], item["color"], tooltip=item["tooltip"]),
+                        unsafe_allow_html=True,
+                    )
+
+    ret_color = UP if is_valid_number(perf_return) and perf_return >= 0 else (DOWN if is_valid_number(perf_return) else GREY)
+    pe_color = UP if is_valid_number(pe) and pe > 0 else (DOWN if is_valid_number(pe) and pe < 0 else GREY)
+    eps_color = UP if is_valid_number(eps) and eps > 0 else (DOWN if is_valid_number(eps) and eps < 0 else GREY)
+    market_items = [
+        {"label": "Return", "value": fmt_pct(perf_return) if is_valid_number(perf_return) else "N/A", "color": ret_color, "tooltip": f"Price return for the selected {selected_period} period."},
+        {"label": "Market Cap", "value": format_market_cap(market_cap) if market_cap else "N/A", "color": BLUE, "tooltip": "Total market value of all outstanding shares."},
+        {"label": "52W High", "value": f"${fmt_one_decimal(wk_high)}" if wk_high else "N/A", "color": GREY, "tooltip": "Highest closing price in the last 52 weeks."},
+        {"label": "52W Low", "value": f"${fmt_one_decimal(wk_low)}" if wk_low else "N/A", "color": GREY, "tooltip": "Lowest closing price in the last 52 weeks."},
+        {"label": "P/E", "value": f"{fmt_int(pe)}x" if is_valid_number(pe) else "N/A", "color": pe_color, "tooltip": "Price-to-earnings ratio on trailing twelve months."},
+        {"label": "EPS", "value": f"${fmt_one_decimal(eps)}" if is_valid_number(eps) else "N/A", "color": eps_color, "tooltip": "Trailing twelve-month earnings per share."},
+    ]
+    fcf_margin = safe_divide(fcf, revenue) if is_valid_number(fcf) and is_valid_number(revenue) else None
+    profitability_items = [
+        {"label": "Gross Margin",  "value": _pct(gross_margin),  "color": _margin_color(gross_margin),            "tooltip": "Revenue left after direct production costs."},
+        {"label": "EBIT Margin",   "value": _pct(ebit_margin),   "color": _margin_color(ebit_margin),             "tooltip": "Operating profit per dollar of revenue."},
+        {"label": "EBITDA Margin", "value": _pct(ebitda_margin), "color": _margin_color(ebitda_margin),           "tooltip": "Earnings before interest, tax, D&A divided by revenue."},
+        {"label": "Net Margin",    "value": _pct(net_margin_r),  "color": _margin_color(net_margin_r),            "tooltip": "Bottom-line profit per dollar of revenue."},
+        {"label": "ROA",           "value": _pct(roa),           "color": _ratio_color(roa, 0.05, 0),             "tooltip": "Net income divided by total assets."},
+        {"label": "ROE",           "value": _pct(roe),           "color": _ratio_color(roe, 0.10, 0),             "tooltip": "Net income divided by shareholders' equity."},
+        {"label": "ROIC",         "value": _pct(roic),           "color": _ratio_color(roic, 0.10, 0),            "tooltip": "EBIT divided by (debt + equity). Measures capital efficiency."},
+        {"label": "FCF Margin",    "value": _pct(fcf_margin),    "color": _margin_color(fcf_margin),              "tooltip": "Free cash flow as a percentage of revenue."},
+    ]
+    net_debt = total_debt - (get_latest_q(q_balance, "Cash And Cash Equivalents") or 0) if is_valid_number(total_debt) else np.nan
+    liquidity_items = [
+        {"label": "Current Ratio",  "value": _x(current_ratio),   "color": _ratio_color(current_ratio, 1.5, 1.0),  "tooltip": "Current assets divided by current liabilities. Above 1x = bills are covered."},
+        {"label": "Quick Ratio",    "value": _x(quick_ratio),     "color": _ratio_color(quick_ratio, 1.0, 0.5),    "tooltip": "Like current ratio but strips out inventory. Stricter solvency test."},
+        {"label": "Debt / Equity",  "value": _x(debt_to_equity),  "color": _de_color(debt_to_equity),              "tooltip": "Total debt divided by shareholders' equity. Lower = less leveraged."},
+        {"label": "FCF",            "value": format_market_cap(fcf) if is_valid_number(fcf) else "N/A",
+                                    "color": _margin_color(safe_divide(fcf, revenue) if is_valid_number(revenue) else None),
+                                    "tooltip": "Levered free cash flow (OCF minus CapEx) for the last twelve months."},
+    ]
+
+    col_market, col_profitability, col_liquidity = st.columns(3)
+    with col_market:
+        _row_label("Market")
+        _render_metric_grid(market_items, cols=2)
+    with col_profitability:
+        _row_label("Profitability")
+        _render_metric_grid(profitability_items, cols=2)
+    with col_liquidity:
+        _row_label("Liquidity & Solvency")
+        _render_metric_grid(liquidity_items, cols=2)
+
+    st.markdown("")
+
+    # ── Tabbed Interface (completely unchanged from original) ─────────────────
+    with tabs_host:
+        # st.tabs() resets to tab 0 on every rerun (no key parameter).
+        # Replaced with a keyed radio that persists the active tab in session_state.
         _TAB_LABELS = ["Income Statement", "Balance Sheet", "Cash Flow", "Margin Analysis"]
         active_tab = st.radio(
             "Financial tab",
@@ -627,299 +790,297 @@ def render_tearsheet(ticker: str):
         )
         st.session_state["tearsheet_active_tab"] = active_tab
 
+    highlight_color = "#1f77b4"
+    other_color     = "#87CEEB"
 
+    YF_LABELS = {
+        "revenue": "Total Revenue", "cogs": "Cost Of Revenue",
+        "gross_profit": "Gross Profit", "opex": "Operating Expense",
+        "ebit": "Operating Income", "ebitda": "EBITDA",
+        "interest": "Interest Expense", "net_income": "Net Income",
+        "cash": "Cash And Cash Equivalents", "current_assets": "Current Assets",
+        "current_debt": "Current Debt", "current_liabilities": "Current Liabilities",
+        "lt_debt": "Long Term Debt",
+        "total_liab": "Total Liabilities Net Minority Interest",
+        "equity": "Stockholders Equity", "net_debt": "Net Debt",
+        "da": "Depreciation And Amortization", "capex": "Capital Expenditure",
+        "investing_cf": "Investing Cash Flow", "dividends": "Cash Dividends Paid",
+        "financing_cf": "Financing Cash Flow", "fcf": "Free Cash Flow",
+    }
 
-        highlight_color = "#1f77b4"
-        other_color     = "#87CEEB"
+    # TAB 1: Income Statement
+    if active_tab == "Income Statement":
+        metric_options = ["Revenue", "COGS", "Gross Profit", "Operating Expenses", "EBIT", "EBITDA", "Interest Expense", "Net Income"]
+        col_a, col_b = st.columns(2)
+        with col_a:
+            selected_metric = st.selectbox("Select metric", metric_options, index=0, key="is_metric", label_visibility="collapsed")
+        with col_b:
+            selected_metric_compare = st.selectbox("Compare to", metric_options, index=2, key="is_compare", label_visibility="collapsed")
 
-        YF_LABELS = {
-            "revenue": "Total Revenue", "cogs": "Cost Of Revenue",
-            "gross_profit": "Gross Profit", "opex": "Operating Expense",
-            "ebit": "Operating Income", "ebitda": "EBITDA",
-            "interest": "Interest Expense", "net_income": "Net Income",
-            "cash": "Cash And Cash Equivalents", "current_assets": "Current Assets",
-            "current_debt": "Current Debt", "current_liabilities": "Current Liabilities",
-            "lt_debt": "Long Term Debt",
-            "total_liab": "Total Liabilities Net Minority Interest",
-            "equity": "Stockholders Equity", "net_debt": "Net Debt",
-            "da": "Depreciation And Amortization", "capex": "Capital Expenditure",
-            "investing_cf": "Investing Cash Flow", "dividends": "Cash Dividends Paid",
-            "financing_cf": "Financing Cash Flow", "fcf": "Free Cash Flow",
+        metric_map = {
+            "Revenue": "Total Revenue", "COGS": "Cost Of Revenue", "Gross Profit": "Gross Profit",
+            "Operating Expenses": "Operating Expense", "EBIT": "Operating Income", "EBITDA": "EBITDA",
+            "Interest Expense": "Interest Expense", "Net Income": "Net Income",
         }
 
-        # TAB 1: Income Statement
-        if active_tab == "Income Statement":
-            metric_options = ["Revenue", "COGS", "Gross Profit", "Operating Expenses", "EBIT", "EBITDA", "Interest Expense", "Net Income"]
-            col_a, col_b = st.columns(2)
-            with col_a:
-                selected_metric = st.selectbox("Select metric", metric_options, index=0, key="is_metric", label_visibility="collapsed")
-            with col_b:
-                selected_metric_compare = st.selectbox("Compare to", metric_options, index=2, key="is_compare", label_visibility="collapsed")
+        yf_label         = metric_map[selected_metric]
+        yf_label_compare = metric_map[selected_metric_compare]
 
-            metric_map = {
-                "Revenue": "Total Revenue", "COGS": "Cost Of Revenue", "Gross Profit": "Gross Profit",
-                "Operating Expenses": "Operating Expense", "EBIT": "Operating Income", "EBITDA": "EBITDA",
-                "Interest Expense": "Interest Expense", "Net Income": "Net Income",
-            }
+        if len(non_peer_years) > 0:
+            values         = [get_value_by_year(yf_fin, yf_label,         y) for y in non_peer_years]
+            compare_values = [get_value_by_year(yf_fin, yf_label_compare, y) for y in non_peer_years]
 
-            yf_label         = metric_map[selected_metric]
-            yf_label_compare = metric_map[selected_metric_compare]
+            peer_labels, peer_values = _best_peers_for_metric(yf_label, source="fin")
+            industry_median = median_ignore_nan(peer_values)
+            sector_median   = compute_sector_median(peer_labels, peer_values, target_sector)
 
-            if len(non_peer_years) > 0:
-                values         = [get_value_by_year(yf_fin, yf_label,         y) for y in non_peer_years]
-                compare_values = [get_value_by_year(yf_fin, yf_label_compare, y) for y in non_peer_years]
+            y_title, y_divisor = format_yaxis_currency(values)
+            scaled_values  = [v / y_divisor if not pd.isna(v) else np.nan for v in values]
+            scaled_compare = [v / y_divisor if not pd.isna(v) else np.nan for v in compare_values]
+            scaled_industry= industry_median / y_divisor if is_valid_number(industry_median) else None
+            scaled_sector  = sector_median   / y_divisor if is_valid_number(sector_median)   else None
 
-                peer_labels, peer_values = _best_peers_for_metric(yf_label, source="fin")
-                industry_median = median_ignore_nan(peer_values)
-                sector_median   = compute_sector_median(peer_labels, peer_values, target_sector)
+            col_left, col_right = st.columns(2)
 
-                y_title, y_divisor = format_yaxis_currency(values)
-                scaled_values  = [v / y_divisor if not pd.isna(v) else np.nan for v in values]
-                scaled_compare = [v / y_divisor if not pd.isna(v) else np.nan for v in compare_values]
-                scaled_industry= industry_median / y_divisor if is_valid_number(industry_median) else None
-                scaled_sector  = sector_median   / y_divisor if is_valid_number(sector_median)   else None
+            with col_left:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_values,  mode="lines+markers", name=selected_metric,
+                    line=dict(color="#1f77b4", width=2.5), marker=dict(size=8)))
+                if scaled_compare is not None:
+                    fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_compare, mode="lines+markers", name=selected_metric_compare,
+                        line=dict(color="red", width=2), marker=dict(size=6)))
+                if is_valid_number(scaled_industry):
+                    fig.add_hline(y=scaled_industry, line_dash="dash", line_color="#f2b632", annotation_text="Industry", annotation_position="right")
+                if is_valid_number(scaled_sector):
+                    fig.add_hline(y=scaled_sector,   line_dash="dash", line_color="#2F5D8A", annotation_text="Sector",   annotation_position="right")
+                fig.update_layout(xaxis=dict(title="", type="category"),
+                    yaxis=dict(title=y_title, showgrid=True, nticks=6, tickformat=".0f"),
+                    legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.2, yanchor="top"),
+                    margin=dict(l=10, r=10, t=10, b=40), height=300)
+                st.plotly_chart(fig, width="stretch")
 
-                col_left, col_right = st.columns(2)
+            with col_right:
+                pvt = list(peer_values) + [values[-1] if len(values) > 0 else np.nan]
+                plt = list(peer_labels) + [ticker]
+                colors = [highlight_color if lbl == ticker else other_color for lbl in plt]
+                plt, pvt, colors = append_median_bars(plt, pvt, colors, industry_median, sector_median)
+                py_title, py_div = format_yaxis_currency(pvt)
+                spv = [v / py_div if not pd.isna(v) else np.nan for v in pvt]
+                _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
+    if active_tab == "Balance Sheet":
+        bs_options = ["Cash and Short-term Investments", "Current Asset", "Short-term Debt", "Current Liabilities", "Long-term Debt", "Total Liabilities", "Total Equity", "Net Debt"]
+        col_a, col_b = st.columns(2)
+        with col_a:
+            selected_bs = st.selectbox("Select metric", bs_options, index=0, key="bs_metric", label_visibility="collapsed")
+        with col_b:
+            selected_bs_compare = st.selectbox("Compare to", bs_options, index=1, key="bs_compare", label_visibility="collapsed")
 
-                with col_left:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_values,  mode="lines+markers", name=selected_metric,
-                        line=dict(color="#1f77b4", width=2.5), marker=dict(size=8)))
-                    if scaled_compare is not None:
-                        fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_compare, mode="lines+markers", name=selected_metric_compare,
-                            line=dict(color="red", width=2), marker=dict(size=6)))
-                    if is_valid_number(scaled_industry):
-                        fig.add_hline(y=scaled_industry, line_dash="dash", line_color="#f2b632", annotation_text="Industry", annotation_position="right")
-                    if is_valid_number(scaled_sector):
-                        fig.add_hline(y=scaled_sector,   line_dash="dash", line_color="#2F5D8A", annotation_text="Sector",   annotation_position="right")
-                    fig.update_layout(xaxis=dict(title="", type="category"),
-                        yaxis=dict(title=y_title, showgrid=True, nticks=6, tickformat=".0f"),
-                        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.2, yanchor="top"),
-                        margin=dict(l=10, r=10, t=10, b=40), height=300)
-                    st.plotly_chart(fig, width="stretch")
+        bs_map = {
+            "Cash and Short-term Investments": "Cash And Cash Equivalents", "Current Asset": "Current Assets",
+            "Short-term Debt": "Current Debt", "Current Liabilities": "Current Liabilities",
+            "Long-term Debt": "Long Term Debt", "Total Liabilities": "Total Liabilities Net Minority Interest",
+            "Total Equity": "Stockholders Equity", "Net Debt": "Net Debt",
+        }
 
-                with col_right:
-                    pvt = list(peer_values) + [values[-1] if len(values) > 0 else np.nan]
-                    plt = list(peer_labels) + [ticker]
-                    colors = [highlight_color if lbl == ticker else other_color for lbl in plt]
-                    plt, pvt, colors = append_median_bars(plt, pvt, colors, industry_median, sector_median)
-                    py_title, py_div = format_yaxis_currency(pvt)
-                    spv = [v / py_div if not pd.isna(v) else np.nan for v in pvt]
-                    _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
-        if active_tab == "Balance Sheet":
-            bs_options = ["Cash and Short-term Investments", "Current Asset", "Short-term Debt", "Current Liabilities", "Long-term Debt", "Total Liabilities", "Total Equity", "Net Debt"]
-            col_a, col_b = st.columns(2)
-            with col_a:
-                selected_bs = st.selectbox("Select metric", bs_options, index=0, key="bs_metric", label_visibility="collapsed")
-            with col_b:
-                selected_bs_compare = st.selectbox("Compare to", bs_options, index=1, key="bs_compare", label_visibility="collapsed")
+        yf_bs_label         = bs_map[selected_bs]
+        yf_bs_label_compare = bs_map[selected_bs_compare]
 
-            bs_map = {
-                "Cash and Short-term Investments": "Cash And Cash Equivalents", "Current Asset": "Current Assets",
-                "Short-term Debt": "Current Debt", "Current Liabilities": "Current Liabilities",
-                "Long-term Debt": "Long Term Debt", "Total Liabilities": "Total Liabilities Net Minority Interest",
-                "Total Equity": "Stockholders Equity", "Net Debt": "Net Debt",
-            }
+        if len(non_peer_years) > 0:
+            bs_values         = [get_value_by_year(yf_balance, yf_bs_label,         y) for y in non_peer_years]
+            compare_bs_values = [get_value_by_year(yf_balance, yf_bs_label_compare, y) for y in non_peer_years]
 
-            yf_bs_label         = bs_map[selected_bs]
-            yf_bs_label_compare = bs_map[selected_bs_compare]
+            peer_bs_labels, peer_bs_values = _best_peers_for_metric(yf_bs_label, source="balance")
+            industry_median = median_ignore_nan(peer_bs_values)
+            sector_median   = compute_sector_median(peer_bs_labels, peer_bs_values, target_sector)
 
-            if len(non_peer_years) > 0:
-                bs_values         = [get_value_by_year(yf_balance, yf_bs_label,         y) for y in non_peer_years]
-                compare_bs_values = [get_value_by_year(yf_balance, yf_bs_label_compare, y) for y in non_peer_years]
+            bs_y_title, bs_y_div = format_yaxis_currency(bs_values)
+            scaled_bs      = [v / bs_y_div if not pd.isna(v) else np.nan for v in bs_values]
+            scaled_compare = [v / bs_y_div if not pd.isna(v) else np.nan for v in compare_bs_values]
+            scaled_industry= industry_median / bs_y_div if is_valid_number(industry_median) else None
+            scaled_sector  = sector_median   / bs_y_div if is_valid_number(sector_median)   else None
 
-                peer_bs_labels, peer_bs_values = _best_peers_for_metric(yf_bs_label, source="balance")
-                industry_median = median_ignore_nan(peer_bs_values)
-                sector_median   = compute_sector_median(peer_bs_labels, peer_bs_values, target_sector)
+            col_left, col_right = st.columns(2)
 
-                bs_y_title, bs_y_div = format_yaxis_currency(bs_values)
-                scaled_bs      = [v / bs_y_div if not pd.isna(v) else np.nan for v in bs_values]
-                scaled_compare = [v / bs_y_div if not pd.isna(v) else np.nan for v in compare_bs_values]
-                scaled_industry= industry_median / bs_y_div if is_valid_number(industry_median) else None
-                scaled_sector  = sector_median   / bs_y_div if is_valid_number(sector_median)   else None
+            with col_left:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_bs, mode="lines+markers", name=selected_bs,
+                    line=dict(color="#1f77b4", width=2.5), marker=dict(size=8)))
+                if scaled_compare is not None:
+                    fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_compare, mode="lines+markers", name=selected_bs_compare,
+                        line=dict(color="red", width=2), marker=dict(size=6)))
+                if is_valid_number(scaled_industry): fig.add_hline(y=scaled_industry, line_dash="dash", line_color="#f2b632")
+                if is_valid_number(scaled_sector):   fig.add_hline(y=scaled_sector,   line_dash="dash", line_color="#2F5D8A")
+                fig.update_layout(xaxis=dict(title="", type="category"),
+                    yaxis=dict(title=bs_y_title, showgrid=True, nticks=6, tickformat=".0f"),
+                    legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.2, yanchor="top"),
+                    margin=dict(l=10, r=10, t=10, b=40), height=300)
+                st.plotly_chart(fig, width="stretch")
 
-                col_left, col_right = st.columns(2)
+            with col_right:
+                pvt = list(peer_bs_values) + [bs_values[-1] if len(bs_values) > 0 else np.nan]
+                plt = list(peer_bs_labels) + [ticker]
+                colors = [highlight_color if lbl == ticker else other_color for lbl in plt]
+                plt, pvt, colors = append_median_bars(plt, pvt, colors, industry_median, sector_median)
+                py_title, py_div = format_yaxis_currency(pvt)
+                spv = [v / py_div if not pd.isna(v) else np.nan for v in pvt]
+                _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
 
-                with col_left:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_bs, mode="lines+markers", name=selected_bs,
-                        line=dict(color="#1f77b4", width=2.5), marker=dict(size=8)))
-                    if scaled_compare is not None:
-                        fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_compare, mode="lines+markers", name=selected_bs_compare,
-                            line=dict(color="red", width=2), marker=dict(size=6)))
-                    if is_valid_number(scaled_industry): fig.add_hline(y=scaled_industry, line_dash="dash", line_color="#f2b632")
-                    if is_valid_number(scaled_sector):   fig.add_hline(y=scaled_sector,   line_dash="dash", line_color="#2F5D8A")
-                    fig.update_layout(xaxis=dict(title="", type="category"),
-                        yaxis=dict(title=bs_y_title, showgrid=True, nticks=6, tickformat=".0f"),
-                        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.2, yanchor="top"),
-                        margin=dict(l=10, r=10, t=10, b=40), height=300)
-                    st.plotly_chart(fig, width="stretch")
+    # TAB 3: Cash Flow
+    if active_tab == "Cash Flow":
+        cf_options = ["Depreciation & Amortization", "CapEx", "Cash from Investing", "Dividends", "Cash from Financing", "Free Cash Flow"]
+        col_a, col_b = st.columns(2)
+        with col_a:
+            selected_cf = st.selectbox("Select metric", cf_options, index=0, key="cf_metric", label_visibility="collapsed")
+        with col_b:
+            selected_cf_compare = st.selectbox("Compare to", cf_options, index=1, key="cf_compare", label_visibility="collapsed")
 
-                with col_right:
-                    pvt = list(peer_bs_values) + [bs_values[-1] if len(bs_values) > 0 else np.nan]
-                    plt = list(peer_bs_labels) + [ticker]
-                    colors = [highlight_color if lbl == ticker else other_color for lbl in plt]
-                    plt, pvt, colors = append_median_bars(plt, pvt, colors, industry_median, sector_median)
-                    py_title, py_div = format_yaxis_currency(pvt)
-                    spv = [v / py_div if not pd.isna(v) else np.nan for v in pvt]
-                    _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
+        cf_map = {
+            "Depreciation & Amortization": "Depreciation And Amortization", "CapEx": "Capital Expenditure",
+            "Cash from Investing": "Investing Cash Flow", "Dividends": "Cash Dividends Paid",
+            "Cash from Financing": "Financing Cash Flow", "Free Cash Flow": "Free Cash Flow",
+        }
 
-        # TAB 3: Cash Flow
-        if active_tab == "Cash Flow":
-            cf_options = ["Depreciation & Amortization", "CapEx", "Cash from Investing", "Dividends", "Cash from Financing", "Free Cash Flow"]
-            col_a, col_b = st.columns(2)
-            with col_a:
-                selected_cf = st.selectbox("Select metric", cf_options, index=0, key="cf_metric", label_visibility="collapsed")
-            with col_b:
-                selected_cf_compare = st.selectbox("Compare to", cf_options, index=1, key="cf_compare", label_visibility="collapsed")
+        yf_cf_label         = cf_map[selected_cf]
+        yf_cf_label_compare = cf_map[selected_cf_compare]
 
-            cf_map = {
-                "Depreciation & Amortization": "Depreciation And Amortization", "CapEx": "Capital Expenditure",
-                "Cash from Investing": "Investing Cash Flow", "Dividends": "Cash Dividends Paid",
-                "Cash from Financing": "Financing Cash Flow", "Free Cash Flow": "Free Cash Flow",
-            }
+        if len(non_peer_years) > 0:
+            cf_values         = [get_value_by_year(yf_cashflow, yf_cf_label,         y) for y in non_peer_years]
+            compare_cf_values = [get_value_by_year(yf_cashflow, yf_cf_label_compare, y) for y in non_peer_years]
 
-            yf_cf_label         = cf_map[selected_cf]
-            yf_cf_label_compare = cf_map[selected_cf_compare]
+            peer_cf_labels, peer_cf_values = _best_peers_for_metric(yf_cf_label, source="cf")
+            industry_median = median_ignore_nan(peer_cf_values)
+            sector_median   = compute_sector_median(peer_cf_labels, peer_cf_values, target_sector)
 
-            if len(non_peer_years) > 0:
-                cf_values         = [get_value_by_year(yf_cashflow, yf_cf_label,         y) for y in non_peer_years]
-                compare_cf_values = [get_value_by_year(yf_cashflow, yf_cf_label_compare, y) for y in non_peer_years]
+            cf_y_title, cf_y_div = format_yaxis_currency(cf_values)
+            scaled_cf      = [v / cf_y_div if not pd.isna(v) else np.nan for v in cf_values]
+            scaled_compare = [v / cf_y_div if not pd.isna(v) else np.nan for v in compare_cf_values]
+            scaled_industry= industry_median / cf_y_div if is_valid_number(industry_median) else None
+            scaled_sector  = sector_median   / cf_y_div if is_valid_number(sector_median)   else None
 
-                peer_cf_labels, peer_cf_values = _best_peers_for_metric(yf_cf_label, source="cf")
-                industry_median = median_ignore_nan(peer_cf_values)
-                sector_median   = compute_sector_median(peer_cf_labels, peer_cf_values, target_sector)
+            col_left, col_right = st.columns(2)
 
-                cf_y_title, cf_y_div = format_yaxis_currency(cf_values)
-                scaled_cf      = [v / cf_y_div if not pd.isna(v) else np.nan for v in cf_values]
-                scaled_compare = [v / cf_y_div if not pd.isna(v) else np.nan for v in compare_cf_values]
-                scaled_industry= industry_median / cf_y_div if is_valid_number(industry_median) else None
-                scaled_sector  = sector_median   / cf_y_div if is_valid_number(sector_median)   else None
+            with col_left:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_cf, mode="lines+markers", name=selected_cf,
+                    line=dict(color="#1f77b4", width=2.5), marker=dict(size=8)))
+                if scaled_compare is not None:
+                    fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_compare, mode="lines+markers", name=selected_cf_compare,
+                        line=dict(color="red", width=2), marker=dict(size=6)))
+                if is_valid_number(scaled_industry): fig.add_hline(y=scaled_industry, line_dash="dash", line_color="#f2b632")
+                if is_valid_number(scaled_sector):   fig.add_hline(y=scaled_sector,   line_dash="dash", line_color="#2F5D8A")
+                fig.update_layout(xaxis=dict(title="", type="category"),
+                    yaxis=dict(title=cf_y_title, showgrid=True, nticks=6, tickformat=".0f"),
+                    legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.2, yanchor="top"),
+                    margin=dict(l=10, r=10, t=10, b=40), height=300)
+                st.plotly_chart(fig, width="stretch")
 
-                col_left, col_right = st.columns(2)
+            with col_right:
+                pvt = list(peer_cf_values) + [cf_values[-1] if len(cf_values) > 0 else np.nan]
+                plt = list(peer_cf_labels) + [ticker]
+                colors = [highlight_color if lbl == ticker else other_color for lbl in plt]
+                plt, pvt, colors = append_median_bars(plt, pvt, colors, industry_median, sector_median)
+                py_title, py_div = format_yaxis_currency(pvt)
+                spv = [v / py_div if not pd.isna(v) else np.nan for v in pvt]
+                _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
 
-                with col_left:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_cf, mode="lines+markers", name=selected_cf,
-                        line=dict(color="#1f77b4", width=2.5), marker=dict(size=8)))
-                    if scaled_compare is not None:
-                        fig.add_trace(go.Scatter(x=list(non_peer_years), y=scaled_compare, mode="lines+markers", name=selected_cf_compare,
-                            line=dict(color="red", width=2), marker=dict(size=6)))
-                    if is_valid_number(scaled_industry): fig.add_hline(y=scaled_industry, line_dash="dash", line_color="#f2b632")
-                    if is_valid_number(scaled_sector):   fig.add_hline(y=scaled_sector,   line_dash="dash", line_color="#2F5D8A")
-                    fig.update_layout(xaxis=dict(title="", type="category"),
-                        yaxis=dict(title=cf_y_title, showgrid=True, nticks=6, tickformat=".0f"),
-                        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.2, yanchor="top"),
-                        margin=dict(l=10, r=10, t=10, b=40), height=300)
-                    st.plotly_chart(fig, width="stretch")
+    # TAB 4: Margin Analysis
+    if active_tab == "Margin Analysis":
+        margin_options = ["Gross Margin %", "EBITDA Margin %", "EBIT Margin %", "Net Income Margin %", "ROA %", "ROE %", "ROIC %"]
+        col_a, col_b = st.columns(2)
+        with col_a:
+            selected_margin = st.selectbox("Select metric", margin_options, index=0, key="margin_metric", label_visibility="collapsed")
+        with col_b:
+            selected_margin_compare = st.selectbox("Compare to", margin_options, index=1, key="margin_compare", label_visibility="collapsed")
 
-                with col_right:
-                    pvt = list(peer_cf_values) + [cf_values[-1] if len(cf_values) > 0 else np.nan]
-                    plt = list(peer_cf_labels) + [ticker]
-                    colors = [highlight_color if lbl == ticker else other_color for lbl in plt]
-                    plt, pvt, colors = append_median_bars(plt, pvt, colors, industry_median, sector_median)
-                    py_title, py_div = format_yaxis_currency(pvt)
-                    spv = [v / py_div if not pd.isna(v) else np.nan for v in pvt]
-                    _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
+        if len(non_peer_years) > 0:
+            margin_values, compare_margin_values = [], []
 
-        # TAB 4: Margin Analysis
-        if active_tab == "Margin Analysis":
-            margin_options = ["Gross Margin %", "EBITDA Margin %", "EBIT Margin %", "Net Income Margin %", "ROA %", "ROE %", "ROIC %"]
-            col_a, col_b = st.columns(2)
-            with col_a:
-                selected_margin = st.selectbox("Select metric", margin_options, index=0, key="margin_metric", label_visibility="collapsed")
-            with col_b:
-                selected_margin_compare = st.selectbox("Compare to", margin_options, index=1, key="margin_compare", label_visibility="collapsed")
+            for y in non_peer_years:
+                rev_val    = get_value_by_year(yf_fin,    "Total Revenue",       y)
+                gp_val     = get_value_by_year(yf_fin,    "Gross Profit",        y)
+                ebitda_val = get_value_by_year(yf_fin,    "EBITDA",              y)
+                ebit_val   = get_value_by_year(yf_fin,    "Operating Income",    y)
+                ni_val     = get_value_by_year(yf_fin,    "Net Income",          y)
+                assets_val = get_value_by_year(yf_balance,"Total Assets",        y)
+                equity_val = get_value_by_year(yf_balance,"Stockholders Equity", y)
+                debt_val   = get_value_by_year(yf_balance,"Total Debt",          y)
 
-            if len(non_peer_years) > 0:
-                margin_values, compare_margin_values = [], []
+                def _m(metric, rev, gp, ebitda, ebit, ni, assets, eq, debt):
+                    ic = eq + debt if is_valid_number(eq) and is_valid_number(debt) else np.nan
+                    lookup = {
+                        "Gross Margin %":      safe_divide(gp,     rev),
+                        "EBITDA Margin %":     safe_divide(ebitda, rev),
+                        "EBIT Margin %":       safe_divide(ebit,   rev),
+                        "Net Income Margin %": safe_divide(ni,     rev),
+                        "ROA %":               safe_divide(ni,     assets),
+                        "ROE %":               safe_divide(ni,     eq),
+                        "ROIC %":              safe_divide(ebit,   ic),
+                    }
+                    raw = lookup.get(metric, np.nan)
+                    return raw * 100 if is_valid_number(raw) else np.nan
 
-                for y in non_peer_years:
-                    rev_val    = get_value_by_year(yf_fin,    "Total Revenue",       y)
-                    gp_val     = get_value_by_year(yf_fin,    "Gross Profit",        y)
-                    ebitda_val = get_value_by_year(yf_fin,    "EBITDA",              y)
-                    ebit_val   = get_value_by_year(yf_fin,    "Operating Income",    y)
-                    ni_val     = get_value_by_year(yf_fin,    "Net Income",          y)
-                    assets_val = get_value_by_year(yf_balance,"Total Assets",        y)
-                    equity_val = get_value_by_year(yf_balance,"Stockholders Equity", y)
-                    debt_val   = get_value_by_year(yf_balance,"Total Debt",          y)
+                args = (rev_val, gp_val, ebitda_val, ebit_val, ni_val, assets_val, equity_val, debt_val)
+                margin_values.append(_m(selected_margin,         *args))
+                compare_margin_values.append(_m(selected_margin_compare, *args))
 
-                    def _m(metric, rev, gp, ebitda, ebit, ni, assets, eq, debt):
-                        ic = eq + debt if is_valid_number(eq) and is_valid_number(debt) else np.nan
-                        lookup = {
-                            "Gross Margin %":      safe_divide(gp,     rev),
-                            "EBITDA Margin %":     safe_divide(ebitda, rev),
-                            "EBIT Margin %":       safe_divide(ebit,   rev),
-                            "Net Income Margin %": safe_divide(ni,     rev),
-                            "ROA %":               safe_divide(ni,     assets),
-                            "ROE %":               safe_divide(ni,     eq),
-                            "ROIC %":              safe_divide(ebit,   ic),
-                        }
-                        raw = lookup.get(metric, np.nan)
-                        return raw * 100 if is_valid_number(raw) else np.nan
+            peer_margin_labels, peer_margin_values = [], []
+            for peer in _peer_candidates:
+                if len(peer_margin_labels) >= 4:
+                    break
+                try:
+                    _load_peer_data(peer)
+                    pf = _peer_fin_cache[peer]
+                    pb = _peer_balance_cache[peer]
+                    rev    = get_latest_value(pf, "Total Revenue")
+                    gp     = get_latest_value(pf, "Gross Profit")
+                    ebitda = get_latest_value(pf, "EBITDA")
+                    ebit   = get_latest_value(pf, "Operating Income")
+                    ni     = get_latest_value(pf, "Net Income")
+                    assets = get_latest_value(pb, "Total Assets")
+                    eq     = get_latest_value(pb, "Stockholders Equity")
+                    debt   = get_latest_value(pb, "Total Debt")
+                    ic     = eq + debt if is_valid_number(eq) and is_valid_number(debt) else np.nan
 
-                    args = (rev_val, gp_val, ebitda_val, ebit_val, ni_val, assets_val, equity_val, debt_val)
-                    margin_values.append(_m(selected_margin,         *args))
-                    compare_margin_values.append(_m(selected_margin_compare, *args))
+                    lookup = {
+                        "Gross Margin %":      safe_divide(gp,     rev),
+                        "EBITDA Margin %":     safe_divide(ebitda, rev),
+                        "EBIT Margin %":       safe_divide(ebit,   rev),
+                        "Net Income Margin %": safe_divide(ni,     rev),
+                        "ROA %":               safe_divide(ni,     assets),
+                        "ROE %":               safe_divide(ni,     eq),
+                        "ROIC %":              safe_divide(ebit,   ic),
+                    }
+                    raw = lookup.get(selected_margin, np.nan)
+                    val = raw * 100 if is_valid_number(raw) else np.nan
+                    if is_valid_number(val):
+                        peer_margin_labels.append(peer)
+                        peer_margin_values.append(val)
+                except Exception:
+                    continue
 
-                peer_margin_labels, peer_margin_values = [], []
-                for peer in _peer_candidates:
-                    if len(peer_margin_labels) >= 4:
-                        break
-                    try:
-                        _load_peer_data(peer)
-                        pf = _peer_fin_cache[peer]
-                        pb = _peer_balance_cache[peer]
-                        rev    = get_latest_value(pf, "Total Revenue")
-                        gp     = get_latest_value(pf, "Gross Profit")
-                        ebitda = get_latest_value(pf, "EBITDA")
-                        ebit   = get_latest_value(pf, "Operating Income")
-                        ni     = get_latest_value(pf, "Net Income")
-                        assets = get_latest_value(pb, "Total Assets")
-                        eq     = get_latest_value(pb, "Stockholders Equity")
-                        debt   = get_latest_value(pb, "Total Debt")
-                        ic     = eq + debt if is_valid_number(eq) and is_valid_number(debt) else np.nan
+            industry_median = median_ignore_nan(peer_margin_values)
+            sector_median   = compute_sector_median(peer_margin_labels, peer_margin_values, target_sector)
 
-                        lookup = {
-                            "Gross Margin %":      safe_divide(gp,     rev),
-                            "EBITDA Margin %":     safe_divide(ebitda, rev),
-                            "EBIT Margin %":       safe_divide(ebit,   rev),
-                            "Net Income Margin %": safe_divide(ni,     rev),
-                            "ROA %":               safe_divide(ni,     assets),
-                            "ROE %":               safe_divide(ni,     eq),
-                            "ROIC %":              safe_divide(ebit,   ic),
-                        }
-                        raw = lookup.get(selected_margin, np.nan)
-                        val = raw * 100 if is_valid_number(raw) else np.nan
-                        if is_valid_number(val):
-                            peer_margin_labels.append(peer)
-                            peer_margin_values.append(val)
-                    except Exception:
-                        continue
+            col_left, col_right = st.columns(2)
 
-                industry_median = median_ignore_nan(peer_margin_values)
-                sector_median   = compute_sector_median(peer_margin_labels, peer_margin_values, target_sector)
+            with col_left:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=list(non_peer_years), y=margin_values, mode="lines+markers", name=selected_margin,
+                    line=dict(color="#1f77b4", width=2.5), marker=dict(size=8)))
+                if compare_margin_values is not None:
+                    fig.add_trace(go.Scatter(x=list(non_peer_years), y=compare_margin_values, mode="lines+markers", name=selected_margin_compare,
+                        line=dict(color="red", width=2), marker=dict(size=6)))
+                if is_valid_number(industry_median): fig.add_hline(y=industry_median, line_dash="dash", line_color="#f2b632")
+                if is_valid_number(sector_median):   fig.add_hline(y=sector_median,   line_dash="dash", line_color="#2F5D8A")
+                fig.update_layout(xaxis=dict(title="", type="category"),
+                    yaxis=dict(title="Percentage (%)", showgrid=True, nticks=6, tickformat=".0f"),
+                    legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.2, yanchor="top"),
+                    margin=dict(l=10, r=10, t=10, b=40), height=300)
+                st.plotly_chart(fig, width="stretch")
 
-                col_left, col_right = st.columns(2)
-
-                with col_left:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=list(non_peer_years), y=margin_values, mode="lines+markers", name=selected_margin,
-                        line=dict(color="#1f77b4", width=2.5), marker=dict(size=8)))
-                    if compare_margin_values is not None:
-                        fig.add_trace(go.Scatter(x=list(non_peer_years), y=compare_margin_values, mode="lines+markers", name=selected_margin_compare,
-                            line=dict(color="red", width=2), marker=dict(size=6)))
-                    if is_valid_number(industry_median): fig.add_hline(y=industry_median, line_dash="dash", line_color="#f2b632")
-                    if is_valid_number(sector_median):   fig.add_hline(y=sector_median,   line_dash="dash", line_color="#2F5D8A")
-                    fig.update_layout(xaxis=dict(title="", type="category"),
-                        yaxis=dict(title="Percentage (%)", showgrid=True, nticks=6, tickformat=".0f"),
-                        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.2, yanchor="top"),
-                        margin=dict(l=10, r=10, t=10, b=40), height=300)
-                    st.plotly_chart(fig, width="stretch")
-
-                with col_right:
-                    pvt = list(peer_margin_values) + [margin_values[-1] if len(margin_values) > 0 else np.nan]
-                    plt = list(peer_margin_labels) + [ticker]
-                    colors = [highlight_color if lbl == ticker else other_color for lbl in plt]
-                    plt, pvt, colors = append_median_bars(plt, pvt, colors, industry_median, sector_median)
-                    _render_public_comps_style_bar(plt, pvt, colors, "Percentage (%)", ticker, tick_suffix="%", height=300)
+            with col_right:
+                pvt = list(peer_margin_values) + [margin_values[-1] if len(margin_values) > 0 else np.nan]
+                plt = list(peer_margin_labels) + [ticker]
+                colors = [highlight_color if lbl == ticker else other_color for lbl in plt]
+                plt, pvt, colors = append_median_bars(plt, pvt, colors, industry_median, sector_median)
+                _render_public_comps_style_bar(plt, pvt, colors, "Percentage (%)", ticker, tick_suffix="%", height=300)
