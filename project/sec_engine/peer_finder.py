@@ -1,6 +1,25 @@
 import pandas as pd
+import numpy as np
 from typing import List, Dict
 from sec_engine.sec_fetch import fetch_company_submissions
+
+
+def _parse_market_cap(value) -> float:
+    """
+    Robustly parse a market-cap value that may be a float, int, or a
+    formatted string (e.g. "1,234,567" or "1234567").
+
+    Returns np.nan for any value that cannot be converted to a finite float,
+    so that callers can safely filter on pd.notna() rather than catching
+    exceptions.
+    """
+    if value is None:
+        return np.nan
+    try:
+        result = pd.to_numeric(str(value).replace(",", "").strip(), errors="coerce")
+        return float(result) if pd.notna(result) else np.nan
+    except (TypeError, ValueError):
+        return np.nan
 
 def get_company_sic(cik: str) -> str:
     """
@@ -54,11 +73,12 @@ def find_peers_by_sic(
         return []
     
     target_cap_str = target_row['Market Cap (M)'].iloc[0]
-    # Handle formatted string (e.g., "1,234,567")
-    if isinstance(target_cap_str, str):
-        target_cap = float(target_cap_str.replace(',', ''))
-    else:
-        target_cap = float(target_cap_str)
+    # Robust parsing: handles floats, ints, comma-formatted strings, None, NaN.
+    target_cap = _parse_market_cap(target_cap_str)
+    if np.isnan(target_cap):
+        # Cannot compute cap-distance without a valid target market cap;
+        # fall back to returning all same-industry peers unsorted.
+        return [t for t in df['Ticker'].tolist() if t != ticker][:max_peers]
     
     # Find companies with same SIC (first 3 digits for broader matching)
     sic_prefix = target_sic[:3] if len(target_sic) >= 3 else target_sic
@@ -97,10 +117,10 @@ def find_peers_by_sic(
     # Filter df to same industry and calculate market cap similarity
     industry_df = df[df['Ticker'].isin(same_industry)].copy()
     
-    # Parse market cap for sorting
-    industry_df['market_cap_numeric'] = industry_df['Market Cap (M)'].apply(
-        lambda x: float(str(x).replace(',', '')) if pd.notna(x) else 0
-    )
+    # Parse market cap for sorting — use robust helper so bad values become NaN
+    # and are then excluded from the distance calculation rather than crashing.
+    industry_df['market_cap_numeric'] = industry_df['Market Cap (M)'].apply(_parse_market_cap)
+    industry_df = industry_df[pd.notna(industry_df['market_cap_numeric'])]
     
     # Calculate distance from target market cap
     industry_df['cap_distance'] = abs(
