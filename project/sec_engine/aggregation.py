@@ -10,7 +10,8 @@
 #     flag so we only abs() when the value came from yfinance.
 #   - All nan-safe arithmetic replaces (x or 0) with nan_to_zero(x),
 #     which correctly handles float 0.0 without treating it as falsy.
-#   - ROIC tax rate (21%) is surfaced as a named constant.
+#   - ROIC tax rate (21%) is now defined in sec_engine/constants.py and
+#     imported from there, so all modules share a single source of truth.
 #   - EBITDA fallback documents that D&A from the cashflow statement
 #     may include non-depreciation items; this is disclosed in the
 #     data_quality dict returned alongside the summary.
@@ -66,15 +67,9 @@ from sec_engine.metrics import (
     peg_pe_ltm,
     peg_lynch,
 )
+from sec_engine.constants import NOPAT_TAX_RATE
 import numpy as np
 import pandas as pd
-
-# ── Constants ─────────────────────────────────────────────────────────────────
-# Effective tax rate used to compute NOPAT = EBIT × (1 - TAX_RATE).
-# The US federal statutory rate is 21%. Companies with significant
-# deferred taxes, NOLs, or international operations may differ.
-# Disclosed here so it is easy to find and adjust.
-NOPAT_TAX_RATE = 0.21
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
