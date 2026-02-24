@@ -1,6 +1,7 @@
 # calculations.py
 # ------------------------------------------------------------------
-# DEPRECATED — this file is not imported anywhere in the application.
+# DEPRECATED — this file is not imported anywhere in the application
+# and will be removed in a future cleanup.
 #
 # All metric calculations have been moved to:
 #   sec_engine/metrics.py      ← pure financial metric functions
@@ -15,11 +16,18 @@
 #   - peg_ratios() mixed up earningsQuarterlyGrowth (a decimal, e.g. 0.15)
 #     with a percent argument and double-counted the ×100 conversion.
 #
-# This file is kept as a placeholder to avoid ImportError if anything
-# references it, but it exports nothing and should eventually be removed.
+# IMPORTANT: This module previously raised ImportError at load time,
+# which broke pytest discovery for the entire sec_engine package.
+# It now emits a DeprecationWarning instead so that:
+#   - Accidental imports produce a visible warning rather than a crash.
+#   - Test runners can still traverse the package without errors.
 # ------------------------------------------------------------------
 
-raise ImportError(
-    "calculations.py is deprecated. "
-    "Import from sec_engine.metrics or sec_engine.aggregation instead."
+import warnings
+
+warnings.warn(
+    "calculations.py is deprecated and will be removed. "
+    "Import from sec_engine.metrics or sec_engine.aggregation instead.",
+    DeprecationWarning,
+    stacklevel=2,
 )
