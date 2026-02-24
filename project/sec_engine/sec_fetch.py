@@ -14,17 +14,33 @@
 #   - Structured exceptions (SECFetchError) replace bare raise_for_status()
 #     so callers can distinguish a 404 (ticker not in EDGAR) from a 503
 #     (transient outage) and handle them differently.
+#   - User-Agent is now read from the SEC_USER_AGENT environment variable
+#     so that personal contact details are not hard-coded in source code.
+#     Falls back to a generic placeholder if the variable is not set.
+#   - Hardcoded "Host: data.sec.gov" header removed — it was only valid
+#     for fetch_company_facts() but not for fetch_company_submissions()
+#     (which also hits data.sec.gov), and a static Host header causes
+#     400 errors on certain proxy configurations. requests sets Host
+#     automatically from the URL.
 # ------------------------------------------------------------------
 
+import os
 import time
 import threading
 import requests
 
 # SEC requires a descriptive User-Agent. Format: "Name email"
+# Set the SEC_USER_AGENT environment variable to avoid storing contact
+# details in source code, e.g.:
+#   export SEC_USER_AGENT="Jane Smith jane@example.com"
+_DEFAULT_USER_AGENT = "EquityAnalyzer contact@example.com"
+_USER_AGENT = os.environ.get("SEC_USER_AGENT", _DEFAULT_USER_AGENT)
+
 SEC_HEADERS = {
-    "User-Agent": "Isaac Mejia Ortiz isaac@email.com",
+    "User-Agent": _USER_AGENT,
     "Accept-Encoding": "gzip, deflate",
-    "Host": "data.sec.gov",
+    # Note: "Host" header intentionally omitted — requests derives it
+    # automatically from the URL, which is correct for all endpoints.
 }
 
 # Semaphore: at most 8 concurrent requests to EDGAR.
