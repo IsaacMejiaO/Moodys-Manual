@@ -373,12 +373,31 @@ def render_stock_chart(ticker, selected_period):
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
+    # Price — primary y-axis (left) with BLUE fill
+    if not hist_period.empty:
+        fig.add_trace(go.Scatter(
+            x=hist_period.index, y=hist_period["Close"],
+            mode="lines", name=f"{ticker} Price",
+            line=dict(color=BLUE, width=3),
+            fill="tozeroy", fillcolor="rgba(10,124,255,0.08)",
+            hovertemplate=f"{ticker} Price: $%{{y:.2f}}<extra></extra>",
+        ), secondary_y=False)
+
+        cur_price = hist_period["Close"].iloc[-1]
+        fig.add_trace(go.Scatter(
+            x=[hist_period.index[-1]], y=[cur_price],
+            mode="text",
+            text=[f"<b>${cur_price:.2f}</b>"], textposition="top left",
+            textfont=dict(size=10, color=BLUE, family="Arial Black"),
+            showlegend=False, hoverinfo="skip", name="",
+        ), secondary_y=False)
+
     # Indexed stock return — secondary y-axis (right), UP/DOWN colored
     if not stock_indexed.empty:
         fig.add_trace(go.Scatter(
             x=hist_period.index, y=stock_indexed,
             mode="lines", name=f"{ticker} Indexed",
-            line=dict(color=ret_color, width=3),
+            line=dict(color=ret_color, width=2.5),
             hovertemplate=f"{ticker} Indexed: %{{y:+.1f}}%<extra></extra>",
         ), secondary_y=True)
 
@@ -397,7 +416,7 @@ def render_stock_chart(ticker, selected_period):
         fig.add_trace(go.Scatter(
             x=sp500_period.index, y=sp500_indexed,
             mode="lines", name="S&P 500 Indexed",
-            line=dict(color=ORANGE, width=3),
+            line=dict(color=ORANGE, width=2.5),
             hovertemplate="S&P 500 Indexed: %{y:+.1f}%<extra></extra>",
         ), secondary_y=True)
 
@@ -418,7 +437,7 @@ def render_stock_chart(ticker, selected_period):
         tickformat="%b '%y" if selected_period in ("1M","3M","6M","YTD","1Y") else "%Y",
     )
     fig.update_yaxes(
-        title_text="", secondary_y=False,
+        title_text=f"{ticker} Price ($)", secondary_y=False,
         showgrid=True, gridcolor="rgba(255,255,255,0.1)", zeroline=False,
         tickformat="$.2f", tickfont=dict(color="#ffffff"),
         title_font=dict(size=12, color=BLUE),
@@ -547,7 +566,52 @@ def render_tearsheet(ticker: str):
     desc_col, tabs_col = st.columns([1, 1])
 
     with desc_col:
-        st.write(info.get("longBusinessSummary", "No description available."))
+        # ── Business description with multi-source fallback ───────────────────
+        # Priority: yfinance longBusinessSummary → SEC EDGAR entity description
+        # → synthesised summary from sector / industry / geography metadata.
+        desc = info.get("longBusinessSummary") or info.get("description") or ""
+
+        if not desc and cik:
+            # SEC EDGAR submissions endpoint carries a plain-English description
+            # for many registrants that yfinance doesn't expose.
+            try:
+                from sec_engine.sec_fetch import fetch_company_submissions
+                submissions = fetch_company_submissions(cik)
+                desc = submissions.get("description", "") or ""
+            except Exception:
+                desc = ""
+
+        if not desc:
+            # Synthesise a minimal but useful summary from structured metadata
+            # so the panel is never blank.
+            name     = info.get("longName") or info.get("shortName") or ticker
+            sector   = info.get("sector", "")
+            industry = info.get("industry", "")
+            city     = info.get("city", "")
+            state    = info.get("state", "")
+            country  = info.get("country", "")
+            exchange = info.get("exchange", "")
+            employees = info.get("fullTimeEmployees")
+
+            parts = [f"**{name}**"]
+            if industry and sector:
+                parts.append(f"is a {industry} company operating in the {sector} sector.")
+            elif sector:
+                parts.append(f"operates in the {sector} sector.")
+            elif industry:
+                parts.append(f"is active in the {industry} industry.")
+
+            location_parts = [p for p in [city, state, country] if p]
+            if location_parts:
+                parts.append(f"Headquartered in {', '.join(location_parts)}.")
+            if exchange:
+                parts.append(f"Listed on {exchange}.")
+            if employees:
+                parts.append(f"Employs approximately {employees:,} full-time staff.")
+
+            desc = " ".join(parts) if len(parts) > 1 else f"No description available for {ticker}."
+
+        st.write(desc)
 
     with tabs_col:
         tabs_host = st.container()
@@ -681,31 +745,37 @@ def render_tearsheet(ticker: str):
         {"label": "P/E", "value": f"{fmt_int(pe)}x" if is_valid_number(pe) else "N/A", "color": pe_color, "tooltip": "Price-to-earnings ratio on trailing twelve months."},
         {"label": "EPS", "value": f"${fmt_one_decimal(eps)}" if is_valid_number(eps) else "N/A", "color": eps_color, "tooltip": "Trailing twelve-month earnings per share."},
     ]
+    fcf_margin = safe_divide(fcf, revenue) if is_valid_number(fcf) and is_valid_number(revenue) else None
     profitability_items = [
-        {"label": "Gross Margin", "value": _pct(gross_margin), "color": _margin_color(gross_margin), "tooltip": "Revenue left after direct production costs."},
-        {"label": "EBIT Margin", "value": _pct(ebit_margin), "color": _margin_color(ebit_margin), "tooltip": "Operating profit per dollar of revenue."},
-        {"label": "EBITDA Margin", "value": _pct(ebitda_margin), "color": _margin_color(ebitda_margin), "tooltip": "Earnings before interest, tax, D&A divided by revenue."},
-        {"label": "Net Margin", "value": _pct(net_margin_r), "color": _margin_color(net_margin_r), "tooltip": "Bottom-line profit per dollar of revenue."},
-        {"label": "ROA", "value": _pct(roa), "color": _ratio_color(roa, 0.05, 0), "tooltip": "Net income divided by total assets."},
-        {"label": "ROE", "value": _pct(roe), "color": _ratio_color(roe, 0.10, 0), "tooltip": "Net income divided by shareholders' equity."},
-        {"label": "ROIC", "value": _pct(roic), "color": _ratio_color(roic, 0.10, 0), "tooltip": "EBIT divided by (debt + equity). Measures capital efficiency."},
+        {"label": "Gross Margin",  "value": _pct(gross_margin),  "color": _margin_color(gross_margin),            "tooltip": "Revenue left after direct production costs."},
+        {"label": "EBIT Margin",   "value": _pct(ebit_margin),   "color": _margin_color(ebit_margin),             "tooltip": "Operating profit per dollar of revenue."},
+        {"label": "EBITDA Margin", "value": _pct(ebitda_margin), "color": _margin_color(ebitda_margin),           "tooltip": "Earnings before interest, tax, D&A divided by revenue."},
+        {"label": "Net Margin",    "value": _pct(net_margin_r),  "color": _margin_color(net_margin_r),            "tooltip": "Bottom-line profit per dollar of revenue."},
+        {"label": "ROA",           "value": _pct(roa),           "color": _ratio_color(roa, 0.05, 0),             "tooltip": "Net income divided by total assets."},
+        {"label": "ROE",           "value": _pct(roe),           "color": _ratio_color(roe, 0.10, 0),             "tooltip": "Net income divided by shareholders' equity."},
+        {"label": "ROIC",         "value": _pct(roic),           "color": _ratio_color(roic, 0.10, 0),            "tooltip": "EBIT divided by (debt + equity). Measures capital efficiency."},
+        {"label": "FCF Margin",    "value": _pct(fcf_margin),    "color": _margin_color(fcf_margin),              "tooltip": "Free cash flow as a percentage of revenue."},
     ]
+    net_debt = total_debt - (get_latest_q(q_balance, "Cash And Cash Equivalents") or 0) if is_valid_number(total_debt) else np.nan
     liquidity_items = [
-        {"label": "Current Ratio", "value": _x(current_ratio), "color": _ratio_color(current_ratio, 1.5, 1.0), "tooltip": "Current assets divided by current liabilities. Above 1x = bills are covered."},
-        {"label": "Quick Ratio", "value": _x(quick_ratio), "color": _ratio_color(quick_ratio, 1.0, 0.5), "tooltip": "Like current ratio but strips out inventory. Stricter solvency test."},
-        {"label": "Debt / Equity", "value": _x(debt_to_equity), "color": _de_color(debt_to_equity), "tooltip": "Total debt divided by shareholders' equity. Lower = less leveraged."},
+        {"label": "Current Ratio",  "value": _x(current_ratio),   "color": _ratio_color(current_ratio, 1.5, 1.0),  "tooltip": "Current assets divided by current liabilities. Above 1x = bills are covered."},
+        {"label": "Quick Ratio",    "value": _x(quick_ratio),     "color": _ratio_color(quick_ratio, 1.0, 0.5),    "tooltip": "Like current ratio but strips out inventory. Stricter solvency test."},
+        {"label": "Debt / Equity",  "value": _x(debt_to_equity),  "color": _de_color(debt_to_equity),              "tooltip": "Total debt divided by shareholders' equity. Lower = less leveraged."},
+        {"label": "FCF",            "value": format_market_cap(fcf) if is_valid_number(fcf) else "N/A",
+                                    "color": _margin_color(safe_divide(fcf, revenue) if is_valid_number(revenue) else None),
+                                    "tooltip": "Levered free cash flow (OCF minus CapEx) for the last twelve months."},
     ]
 
     col_market, col_profitability, col_liquidity = st.columns(3)
     with col_market:
         _row_label("Market")
-        _render_metric_grid(market_items, cols=1)
+        _render_metric_grid(market_items, cols=2)
     with col_profitability:
         _row_label("Profitability")
-        _render_metric_grid(profitability_items, cols=1)
+        _render_metric_grid(profitability_items, cols=2)
     with col_liquidity:
         _row_label("Liquidity & Solvency")
-        _render_metric_grid(liquidity_items, cols=1)
+        _render_metric_grid(liquidity_items, cols=2)
 
     st.markdown("")
 
