@@ -55,6 +55,34 @@ BUSINESS_DESC_CACHE = {}
 REVENUE_CAGR_CACHE = {}
 SIC_INDEX_CACHE_FILE = Path(__file__).resolve().parent / ".cache" / "sic_index.json"
 
+# ---------------------------------------------------------------------------
+# Session-aware peer cache helpers
+# ---------------------------------------------------------------------------
+# PEER_CACHE is module-level and persists for the lifetime of the Streamlit
+# worker process.  That means a result cached in one browser session (with a
+# small uploaded_universe) can be returned to a different session that expects
+# a richer set of comps.
+#
+# We solve this by storing peers in st.session_state when available, falling
+# back to the module-level dict otherwise.  The cache key includes a hash of
+# the current universe so a change in the upload always triggers a re-run.
+
+def _peer_cache_get(key: str):
+    """Return cached peers or None.  Prefers session_state over module dict."""
+    try:
+        cache = st.session_state.setdefault("_peer_cache", {})
+        return cache.get(key)
+    except Exception:
+        return PEER_CACHE.get(key)
+
+def _peer_cache_set(key: str, value) -> None:
+    """Store peers in both session_state and module dict."""
+    try:
+        st.session_state.setdefault("_peer_cache", {})[key] = value
+    except Exception:
+        pass
+    PEER_CACHE[key] = value
+
 # ============================================================================
 # SCORING WEIGHTS (Configurable)
 # ============================================================================
@@ -1341,7 +1369,7 @@ def discover_peers_capital_iq_style(
 ) -> List[Dict]:
     """
     UPGRADED: Main function to discover peers using TRUE Capital IQ methodology.
-    
+
     Key Improvements:
     1. NLP-based business description similarity
     2. Proper revenue CAGR from SEC (not price proxy)
@@ -1349,24 +1377,32 @@ def discover_peers_capital_iq_style(
     4. Deterministic SIC index (no sampling)
     5. Float-adjusted quality scoring
     6. Weighted composite scoring model
-    
+
     Args:
         ticker: Target company ticker
-        uploaded_universe: Optional list of tickers to search first
+        uploaded_universe: Optional list of tickers to include as ADDITIONAL
+            SEEDS in the candidate pool.  This list is NEVER used as a
+            constraint — companies outside it are always considered.
+            Passing None (or an empty list) has no effect on the breadth
+            of peer discovery; the ETF holdings, sector seed universe, SIC
+            index, and structural-analogues layers always run regardless.
         min_peers: Minimum number of peers to return
         max_peers: Maximum number of peers to return
         screening_criteria: Custom screening rules (or use defaults)
         scoring_weights: Custom scoring weights (or use defaults)
-    
+
     Returns:
         List of peer dictionaries with scores and profiles
     """
-    # Check cache
+    # ── Cache key includes universe hash so a change in the upload
+    #    always triggers a fresh run (fixes stale cross-session results)
     uploaded_universe_norm = _normalize_ticker_list(uploaded_universe)
     universe_signature = "|".join(sorted(uploaded_universe_norm)[:200])
-    cache_key = f"{ticker.upper()}_{max_peers}_{min_peers}_{hash(universe_signature)}_v2"
-    if cache_key in PEER_CACHE:
-        return PEER_CACHE[cache_key]
+    cache_key = f"{ticker.upper()}_{max_peers}_{min_peers}_{hash(universe_signature)}_v3"
+
+    cached = _peer_cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     # Use default weights if not provided
     if scoring_weights is None:
@@ -1562,8 +1598,8 @@ def discover_peers_capital_iq_style(
 
     result = enhanced_peers[:max_peers]
 
-    # Cache result
-    PEER_CACHE[cache_key] = result
+    # Store in session-aware cache
+    _peer_cache_set(cache_key, result)
 
     return result
 
@@ -1578,17 +1614,45 @@ def find_best_peers_automated(
     max_peers: int = 10
 ) -> List[str]:
     """
-    Simplified interface - just returns ticker list.
-    This is the function to use in your UI code.
+    Simplified interface — returns a ranked ticker list of public comparables.
+
+    This is the function called by multiples.py, tearsheet.py, and ratios.py.
+
+    Discovery is ALWAYS open-universe: the function searches ETF holdings,
+    a curated sector seed list (~80–120 S&P 500 names per sector), the SEC
+    EDGAR SIC index, and a structural-analogues layer (cross-sector comps
+    that analysts routinely use).  Uploaded_universe is treated as an
+    ADDITIONAL SEED, never as a whitelist or constraint — companies not in
+    the uploaded list are always considered and will appear in results if
+    they score higher than listed alternatives.
+
+    Args:
+        ticker:            Target company ticker.
+        uploaded_universe: Optional extra seeds (e.g. the screener universe
+                           the user uploaded).  Pass None to rely entirely
+                           on automated discovery — the result will be the
+                           same or richer either way.
+        max_peers:         Maximum peers to return to the caller.
+
+    Returns:
+        List of ticker strings, best comps first.
     """
+    # Request more candidates internally than we return so the scoring layer
+    # has enough headroom to surface the truly best matches even when many
+    # candidates from automated discovery turn out to be borderline.
+    internal_max = max(max_peers * 3, 30)
+
     peer_data = discover_peers_capital_iq_style(
         ticker=ticker,
-        uploaded_universe=uploaded_universe,
+        uploaded_universe=uploaded_universe,   # treated as seed, not constraint
         min_peers=5,
-        max_peers=max_peers,
+        max_peers=internal_max,
     )
 
-    return [p["ticker"] for p in peer_data if p.get("ticker") and p.get("ticker") != ticker.upper()]
+    return [
+        p["ticker"] for p in peer_data
+        if p.get("ticker") and p.get("ticker") != ticker.upper()
+    ][:max_peers]
 
 
 # Export main functions
