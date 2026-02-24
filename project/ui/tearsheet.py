@@ -610,7 +610,7 @@ def render_tearsheet(ticker: str):
         st.write(desc)
 
     with tabs_col:
-        pass  # tab selector rendered full-width below alongside the graph content
+        tabs_host = st.container()
 
     st.markdown("")
 
@@ -782,14 +782,15 @@ def render_tearsheet(ticker: str):
     # Fix: persist the active tab in session_state using a keyed radio widget
     # styled as tab buttons, which survives reruns correctly.
     _TAB_LABELS = ["Income Statement", "Balance Sheet", "Cash Flow", "Margin Analysis"]
-    active_tab = st.radio(
-        "Financial tab",
-        options=_TAB_LABELS,
-        index=_TAB_LABELS.index(st.session_state.get("tearsheet_active_tab", "Income Statement")),
-        horizontal=True,
-        key="tearsheet_tab_radio",
-        label_visibility="collapsed",
-    )
+    with tabs_host:
+        active_tab = st.radio(
+            "Financial tab",
+            options=_TAB_LABELS,
+            index=_TAB_LABELS.index(st.session_state.get("tearsheet_active_tab", "Income Statement")),
+            horizontal=True,
+            key="tearsheet_tab_radio",
+            label_visibility="collapsed",
+        )
     st.session_state["tearsheet_active_tab"] = active_tab
 
 
