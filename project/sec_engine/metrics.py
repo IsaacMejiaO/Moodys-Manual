@@ -2,6 +2,13 @@
 # ---------------------------------------------
 # Core financial metric calculations.
 # All functions are pure and safe for production use.
+#
+# Fixes vs. prior version:
+#   - safe_divide() now wraps both guards in try/except (TypeError, ValueError)
+#     so that non-numeric inputs (strings, objects) return `default` instead of
+#     raising TypeError when np.isnan() receives an unexpected type.
+#     The prior version was safe for float/None inputs but would raise on any
+#     other type that slipped through (e.g. a pandas NA or a bare string).
 
 import numpy as np
 import pandas as pd
@@ -10,11 +17,26 @@ import pandas as pd
 # Safe division helper
 # ---------------------------------------------------------
 def safe_divide(a, b, default=np.nan):
-    if b is None or b == 0 or np.isnan(b):
+    """
+    Divide a by b, returning `default` for any invalid input.
+
+    Handles: None, float NaN, integer 0, non-numeric types (returns default
+    rather than raising TypeError or ValueError for unexpected input types).
+    """
+    try:
+        if b is None:
+            return default
+        b_f = float(b)
+        if b_f == 0 or np.isnan(b_f):
+            return default
+        if a is None:
+            return default
+        a_f = float(a)
+        if np.isnan(a_f):
+            return default
+        return a_f / b_f
+    except (TypeError, ValueError):
         return default
-    if a is None or np.isnan(a):
-        return default
-    return a / b
 
 # ---------------------------------------------------------
 # Margins
