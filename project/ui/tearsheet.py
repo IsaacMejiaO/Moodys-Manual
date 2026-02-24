@@ -379,7 +379,6 @@ def render_stock_chart(ticker, selected_period):
             x=hist_period.index, y=stock_indexed,
             mode="lines", name=f"{ticker} Indexed",
             line=dict(color=ret_color, width=3),
-            showlegend=False,
             hovertemplate=f"{ticker} Indexed: %{{y:+.1f}}%<extra></extra>",
         ), secondary_y=True)
 
@@ -399,7 +398,6 @@ def render_stock_chart(ticker, selected_period):
             x=sp500_period.index, y=sp500_indexed,
             mode="lines", name="S&P 500 Indexed",
             line=dict(color=ORANGE, width=3),
-            showlegend=False,
             hovertemplate="S&P 500 Indexed: %{y:+.1f}%<extra></extra>",
         ), secondary_y=True)
 
@@ -422,7 +420,7 @@ def render_stock_chart(ticker, selected_period):
     fig.update_yaxes(
         title_text="", secondary_y=False,
         showgrid=False, zeroline=False,
-        ticklabels=False, showticklabels=False,
+        showticklabels=False,
     )
     fig.update_yaxes(
         title_text="Indexed Performance (%)", secondary_y=True,
@@ -434,8 +432,11 @@ def render_stock_chart(ticker, selected_period):
     fig.update_layout(
         **_CHART_LAYOUT,
         height=350,
-        margin=dict(l=20, r=20, t=20, b=20),
-        showlegend=False,
+        margin=dict(l=20, r=20, t=20, b=60),
+        legend=dict(
+            orientation="h", y=-0.18, x=0.5, xanchor="center",
+            bgcolor="rgba(0,0,0,0)", font=dict(color="#ffffff"),
+        ),
     )
     st.plotly_chart(fig, width="stretch")
     return perf_return
