@@ -10,14 +10,37 @@ A comprehensive equity analysis platform with:
 - Financial ratios analysis
 - Portfolio optimization (Monte Carlo)
 - Portfolio performance tracking (XIRR/Dollar-Weighted Returns)
+
+Fixes vs. prior version:
+  - Bare `except: pass` on yfinance block replaced with
+    `except Exception as e: logging.warning(...)` so real errors are
+    visible in logs rather than silently swallowed.
+  - Bare `except:` on EPS history replaced with `except Exception`.
+  - `except Exception:` on _try_autoload_screener_csv() loop now logs
+    the failure at DEBUG level.
+  - Interest expense sign normalization: yfinance reports Interest Expense
+    as a NEGATIVE value (cash outflow). We now abs() it at the point of
+    ingestion so that all downstream consumers (ebit_to_interest, UFCF,
+    etc.) receive a positive expense value, consistent with the SEC path.
+  - Session-state ticker caches (ticker_data_cache, ticker_summary_cache)
+    are now capped at MAX_TICKER_CACHE_SIZE entries using an LRU-style
+    eviction policy so long-running sessions do not grow memory unboundedly.
 """
 import sys
 import os
+import logging
 
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
 sys.path.append(str(ROOT_DIR))
+
+# Maximum number of per-ticker entries held in session-state caches.
+# When the limit is reached the oldest entry is evicted (LRU-style).
+# At ~2–5 MB per ticker this caps in-session memory at ~100–250 MB.
+MAX_TICKER_CACHE_SIZE = 50
+
+_logger = logging.getLogger(__name__)
 
 import streamlit as st
 import pandas as pd
@@ -145,7 +168,8 @@ def _try_autoload_screener_csv() -> bool:
             st.session_state["uploaded_universe"] = tickers
             st.session_state["_screener_source"] = f"file:{path}"
             return True
-        except Exception:
+        except Exception as _e:
+            _logger.debug("Failed to load screener CSV from %s: %s", path, _e)
             continue
     return False
 
@@ -286,6 +310,16 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
             "ocf": get_ltm_from_quarterly(quarterly_cashflow, "Operating Cash Flow"),
             "capex": get_ltm_from_quarterly(quarterly_cashflow, "Capital Expenditure"),
         }
+
+        # yfinance reports Interest Expense as a NEGATIVE value (it is a cash
+        # outflow on the income statement). Normalize to a positive expense value
+        # here so that all downstream consumers (ebit_to_interest coverage ratio,
+        # UFCF add-back, etc.) receive a consistent positive number regardless of
+        # source (SEC tags are already positive outflows).
+        ie = ltm_data.get("interest_expense", np.nan)
+        if not pd.isna(ie) and ie < 0:
+            ltm_data["interest_expense"] = abs(ie)
+
         # yfinance capex is a negative outflow — flag so aggregation.py
         # knows to abs() it when normalizing sign
         _capex_source = "yfinance"
@@ -348,13 +382,15 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
         try:
             historical_data["eps_history"] = None
             historical_data["diluted_eps_history"] = get_annual_series(income_stmt, "Diluted EPS")
-        except:
+        except Exception as _e:
+            _logger.debug("Could not extract EPS history for %s: %s", ticker, _e)
             historical_data["eps_history"] = None
             historical_data["diluted_eps_history"] = None
 
-    except Exception:
-        # If yfinance fails completely, we'll rely on SEC backup below
-        pass
+    except Exception as e:
+        # yfinance fetch failed — log the error so it is visible in logs, then
+        # fall through to the SEC backup. Bare `except: pass` would hide bugs.
+        _logger.warning("yfinance fetch failed for %s: %s", ticker, e)
 
     # =========================================================
     # BACKUP SOURCE: SEC FILINGS
@@ -482,25 +518,41 @@ def get_or_load_ticker_data(ticker: str):
     """
     Get ticker data from cache or load it.
     This prevents re-fetching data on every page navigation.
+
+    Evicts the oldest entry when the cache exceeds MAX_TICKER_CACHE_SIZE,
+    preventing unbounded memory growth in long-running sessions.
     """
+    cache = st.session_state["ticker_data_cache"]
+
     # Check if already in session state
-    if ticker in st.session_state["ticker_data_cache"]:
-        return st.session_state["ticker_data_cache"][ticker]
+    if ticker in cache:
+        return cache[ticker]
 
     # Load and cache
     cik = CIK_MAP.get(ticker)
     data = fetch_company_data_unified(ticker, cik)
-    st.session_state["ticker_data_cache"][ticker] = data
+
+    # Evict oldest entry if at capacity (dict preserves insertion order in Python 3.7+)
+    if len(cache) >= MAX_TICKER_CACHE_SIZE:
+        oldest_key = next(iter(cache))
+        del cache[oldest_key]
+
+    cache[ticker] = data
     return data
+
 
 def get_or_compute_summary(ticker: str):
     """
     Get summary from cache or compute it.
     This prevents re-computing metrics on every page navigation.
+
+    Evicts the oldest entry when the cache exceeds MAX_TICKER_CACHE_SIZE.
     """
+    summary_cache = st.session_state["ticker_summary_cache"]
+
     # Check if already computed
-    if ticker in st.session_state["ticker_summary_cache"]:
-        return st.session_state["ticker_summary_cache"][ticker]
+    if ticker in summary_cache:
+        return summary_cache[ticker]
 
     # Get data (cached)
     data = get_or_load_ticker_data(ticker)
@@ -528,8 +580,12 @@ def get_or_compute_summary(ticker: str):
         capex_from_yfinance=data.get("capex_source") == "yfinance",
     )
 
-    # Cache it
-    st.session_state["ticker_summary_cache"][ticker] = summary
+    # Evict oldest entry if at capacity
+    if len(summary_cache) >= MAX_TICKER_CACHE_SIZE:
+        oldest_key = next(iter(summary_cache))
+        del summary_cache[oldest_key]
+
+    summary_cache[ticker] = summary
     return summary
 
 def preload_ticker_data():
