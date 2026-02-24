@@ -777,18 +777,12 @@ def render_tearsheet(ticker: str):
 
     # ── Tabbed Interface (completely unchanged from original) ─────────────────
     with tabs_host:
-        # st.tabs() resets to tab 0 on every rerun (no key parameter).
-        # Replaced with a keyed radio that persists the active tab in session_state.
-        _TAB_LABELS = ["Income Statement", "Balance Sheet", "Cash Flow", "Margin Analysis"]
-        active_tab = st.radio(
-            "Financial tab",
-            options=_TAB_LABELS,
-            index=_TAB_LABELS.index(st.session_state.get("tearsheet_active_tab", "Income Statement")),
-            horizontal=True,
-            key="tearsheet_tab_radio",
-            label_visibility="collapsed",
-        )
-        st.session_state["tearsheet_active_tab"] = active_tab
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "Income Statement",
+            "Balance Sheet",
+            "Cash Flow",
+            "Margin Analysis",
+        ])
 
     highlight_color = "#1f77b4"
     other_color     = "#87CEEB"
@@ -809,7 +803,7 @@ def render_tearsheet(ticker: str):
     }
 
     # TAB 1: Income Statement
-    if active_tab == "Income Statement":
+    with tab1:
         metric_options = ["Revenue", "COGS", "Gross Profit", "Operating Expenses", "EBIT", "EBITDA", "Interest Expense", "Net Income"]
         col_a, col_b = st.columns(2)
         with col_a:
@@ -867,7 +861,7 @@ def render_tearsheet(ticker: str):
                 py_title, py_div = format_yaxis_currency(pvt)
                 spv = [v / py_div if not pd.isna(v) else np.nan for v in pvt]
                 _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
-    if active_tab == "Balance Sheet":
+    with tab2:
         bs_options = ["Cash and Short-term Investments", "Current Asset", "Short-term Debt", "Current Liabilities", "Long-term Debt", "Total Liabilities", "Total Equity", "Net Debt"]
         col_a, col_b = st.columns(2)
         with col_a:
@@ -926,7 +920,7 @@ def render_tearsheet(ticker: str):
                 _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
 
     # TAB 3: Cash Flow
-    if active_tab == "Cash Flow":
+    with tab3:
         cf_options = ["Depreciation & Amortization", "CapEx", "Cash from Investing", "Dividends", "Cash from Financing", "Free Cash Flow"]
         col_a, col_b = st.columns(2)
         with col_a:
@@ -984,7 +978,7 @@ def render_tearsheet(ticker: str):
                 _render_public_comps_style_bar(plt, spv, colors, py_title, ticker, height=300)
 
     # TAB 4: Margin Analysis
-    if active_tab == "Margin Analysis":
+    with tab4:
         margin_options = ["Gross Margin %", "EBITDA Margin %", "EBIT Margin %", "Net Income Margin %", "ROA %", "ROE %", "ROIC %"]
         col_a, col_b = st.columns(2)
         with col_a:
