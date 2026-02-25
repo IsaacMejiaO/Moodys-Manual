@@ -58,7 +58,6 @@ from sec_engine.aggregation import build_company_summary
 from ui.tearsheet import render_tearsheet
 from ui.multiples import render_multiples
 from ui.ratios import render_ratios
-from ui.portfolio_monte_carlo import render_portfolio_monte_carlo
 from ui.performance import render_performance, load_transactions_from_csv
 
 # ---------------------------------------------------------
@@ -88,6 +87,10 @@ initialize_performance_cache()
 # ---------------------------------------------------------
 if "page" not in st.session_state:
     st.session_state["page"] = "dashboard"
+
+# Redirect stale session state from the old standalone Portfolio page
+if st.session_state.get("page") == "portfolio_monte_carlo":
+    st.session_state["page"] = "performance"
 
 if "selected_ticker" not in st.session_state:
     st.session_state["selected_ticker"] = None
@@ -810,10 +813,6 @@ if st.sidebar.button("Ratios", width="stretch", type="primary" if current_page =
     else:
         st.sidebar.warning("Click a ticker row in the Screener first.")
 
-if st.sidebar.button("Portfolio", width="stretch", type="primary" if current_page == "portfolio_monte_carlo" else "secondary"):
-    st.session_state["page"] = "portfolio_monte_carlo"
-    st.rerun()
-
 if st.sidebar.button("Performance", width="stretch", type="primary" if current_page == "performance" else "secondary"):
     st.session_state["page"] = "performance"
     st.rerun()
@@ -1269,12 +1268,6 @@ elif st.session_state["page"] == "ratios":
         st.warning("No ticker selected.")
     else:
         render_ratios(ticker=ticker)
-
-# =========================================================
-# PORTFOLIO MONTE CARLO PAGE
-# =========================================================
-elif st.session_state["page"] == "portfolio_monte_carlo":
-    render_portfolio_monte_carlo()
 
 # =========================================================
 # PERFORMANCE TRACKING PAGE
