@@ -1039,7 +1039,7 @@ elif st.session_state["page"] == "dashboard":
             "Net Income 5yr CAGR %", "EPS 5yr CAGR %", "Diluted EPS 5yr CAGR %",
             "AR 5yr CAGR %", "Inventory 5yr CAGR %", "Inventory 5yr acCAGR %", "Net PP&E 5yr CAGR %",
             "Total Assets 5yr CAGR %", "Total Liabilities 5yr CAGR %",
-            "Total Equity 5yr CAGR %", "LFCF 5yr CAGR %", "Revenue 5yr CAGR %",
+            "Total Equity 5yr CAGR %", "LFCF 5yr CAGR %",
         ]
         for col in columns_to_remove:
             if col in df_adj.columns:
@@ -1051,6 +1051,14 @@ elif st.session_state["page"] == "dashboard":
             cols.remove("FCF Yield %")
             insert_at = cols.index("LFCF 3yr CAGR %") + 1
             cols.insert(insert_at, "FCF Yield %")
+            df_adj = df_adj[cols]
+
+        # ── Reorder: move Revenue 5yr CAGR % to immediately follow Revenue 3yr CAGR % ──
+        if "Revenue 5yr CAGR %" in df_adj.columns and "Revenue 3yr CAGR %" in df_adj.columns:
+            cols = list(df_adj.columns)
+            cols.remove("Revenue 5yr CAGR %")
+            insert_at = cols.index("Revenue 3yr CAGR %") + 1
+            cols.insert(insert_at, "Revenue 5yr CAGR %")
             df_adj = df_adj[cols]
 
         # ── Keep numeric columns as numbers (enables proper sort) ─────────────
@@ -1106,14 +1114,16 @@ elif st.session_state["page"] == "dashboard":
                 df_display[col] = pd.to_numeric(df_display[col], errors="coerce")
 
         # ── Column config: proper formatters + autofit widths ─────────────────
-        # Columns displayed as percentage (values are already in % units, e.g. 45.2)
+        # All numeric columns: whole-number display (no decimal places).
+        # Percentage columns use "%.0f%%" — values are already in % units (e.g. 45 = 45%).
+        # PEG ratios are displayed as percentages per user preference.
         pct_cols = {
             "Gross Margin %", "EBIT Margin %", "EBITDA Margin %",
             "Net Margin %", "ROIC %", "FCF Yield %",
-            "Revenue 2yr CAGR %", "Revenue 3yr CAGR %", "LFCF 3yr CAGR %",
+            "Revenue 2yr CAGR %", "Revenue 3yr CAGR %", "Revenue 5yr CAGR %",
+            "LFCF 3yr CAGR %",
+            "PEG (PE LTM)", "PEG (Lynch)",
         }
-        # Ratio / plain-number columns (PEG)
-        ratio_cols = {"PEG (PE LTM)", "PEG (Lynch)"}
         # Market cap: large integer formatted with commas
         mktcap_cols = {"Market Cap (M)"}
 
@@ -1138,15 +1148,11 @@ elif st.session_state["page"] == "dashboard":
                 column_config[col] = st.column_config.TextColumn(col, width="small")
             elif col in pct_cols:
                 column_config[col] = st.column_config.NumberColumn(
-                    col, format="%.1f%%", width="small"
-                )
-            elif col in ratio_cols:
-                column_config[col] = st.column_config.NumberColumn(
-                    col, format="%.2f", width="small"
+                    col, format="%.0f%%", width="small"
                 )
             else:
                 column_config[col] = st.column_config.NumberColumn(
-                    col, format="%.1f", width="small"
+                    col, format="%.0f", width="small"
                 )
 
         event = st.dataframe(
