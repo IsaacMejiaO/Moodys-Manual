@@ -1006,6 +1006,10 @@ elif st.session_state["page"] == "dashboard":
         # ── Remove unwanted columns ───────────────────────────────────────────
         columns_to_remove = [
             "Data As Of",   # freshness field — shown in tearsheet, not screener
+            # Raw dollar financials — hidden from screener, available in tearsheet
+            "Revenue", "Gross Profit", "EBIT", "EBITDA", "Net Income",
+            "OCF", "CapEx", "LFCF", "UFCF", "Interest Expense",
+            "Total Debt", "Net Debt", "Cash",
             "ROA %", "ROE %", "RCE %", "SG&A Margin %", "R&D Margin %",
             "LFCF Margin %", "UFCF Margin %", "CapEx % Revenue",
             "Total Asset Turnover", "AR Turnover", "Inventory Turnover",
