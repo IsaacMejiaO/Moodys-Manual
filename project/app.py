@@ -1061,7 +1061,7 @@ elif st.session_state["page"] == "dashboard":
             unsafe_allow_html=True,
         )
 
-        # ── CSS: wrap headers, tighten cells ─────────────────────────────────
+        # ── CSS: wrap headers, tighten cells, alternating row stripes ────────
         st.markdown(
             """
             <style>
@@ -1079,6 +1079,24 @@ elif st.session_state["page"] == "dashboard":
             [data-testid="stDataFrame"] th {
                 padding: 4px 6px !important;
                 font-size: 13px !important;
+            }
+
+            /* ── Alternating row stripes (Excel-style) ── */
+            /* Odd rows — slightly lighter */
+            [data-testid="stDataFrame"] .ag-row-odd {
+                background-color: #1e1e2e !important;
+            }
+            /* Even rows — darker */
+            [data-testid="stDataFrame"] .ag-row-even {
+                background-color: #16161f !important;
+            }
+            /* Keep hover highlight visible over the stripes */
+            [data-testid="stDataFrame"] .ag-row-hover {
+                background-color: #2a2a3e !important;
+            }
+            /* Keep selected row highlight */
+            [data-testid="stDataFrame"] .ag-row-selected {
+                background-color: #1a3a5c !important;
             }
             </style>
             """,
