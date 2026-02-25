@@ -25,9 +25,6 @@ import yfinance as yf
 from scipy import stats
 from scipy.optimize import brentq
 
-# Imported lazily inside the Portfolio tab to avoid circular imports at module load.
-# (portfolio_monte_carlo may import from performance in future; lazy import is safer.)
-
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 UP      = "#00C805"
@@ -1402,7 +1399,7 @@ def render_performance() -> None:
     # ════════════ TAB 4 — PORTFOLIO ══════════════════════════════════════════
     with tabs[4]:
         from ui.portfolio_monte_carlo import render_portfolio_monte_carlo
-        render_portfolio_monte_carlo()
+        render_portfolio_monte_carlo(holdings=holdings)
 
     # ── Debug ─────────────────────────────────────────────────────────────────
     if debug_mode:
