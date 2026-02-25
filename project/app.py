@@ -1045,6 +1045,14 @@ elif st.session_state["page"] == "dashboard":
             if col in df_adj.columns:
                 df_adj = df_adj.drop(columns=[col])
 
+        # ── Reorder: swap EBIT Margin % and EBITDA Margin % ─────────────────
+        if "EBIT Margin %" in df_adj.columns and "EBITDA Margin %" in df_adj.columns:
+            cols = list(df_adj.columns)
+            ebit_idx  = cols.index("EBIT Margin %")
+            ebitda_idx = cols.index("EBITDA Margin %")
+            cols[ebit_idx], cols[ebitda_idx] = cols[ebitda_idx], cols[ebit_idx]
+            df_adj = df_adj[cols]
+
         # ── Reorder: move FCF Yield % to immediately follow LFCF 3yr CAGR % ──
         if "FCF Yield %" in df_adj.columns and "LFCF 3yr CAGR %" in df_adj.columns:
             cols = list(df_adj.columns)
