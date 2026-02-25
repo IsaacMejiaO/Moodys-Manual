@@ -470,34 +470,46 @@ def render_portfolio_monte_carlo(holdings: dict = None):
     </style>
     """, unsafe_allow_html=True)
 
-    # ── Auto-populate stocks from current holdings ────────────────────────────
+    # ── Compute the correct starting value for the stocks textarea ───────────
+    # We derive the display value directly here — before any widget renders —
+    # so it is always correct on every run regardless of session-state history.
+    #
+    # Priority:
+    #   1. If holdings are provided, use them (unless the user has already run
+    #      the optimizer with a manually-edited list, in which case keep that).
+    #   2. Otherwise fall back to whatever was typed last, or the demo default.
+    #
+    # We track _portfolio_holdings_key so we can detect when the user has
+    # deliberately edited the list away from their actual holdings.
+
+    def _norm(text: str) -> str:
+        return ",".join(sorted(t.strip().upper() for t in text.splitlines() if t.strip()))
+
     if holdings:
         held_tickers = sorted(holdings.keys())
         held_key     = ",".join(held_tickers)
-        prev_key     = st.session_state.get("_portfolio_holdings_key", "")
         canonical    = "\n".join(held_tickers)
-        current_text = st.session_state.get("portfolio_stocks_input", "")
+        prev_key     = st.session_state.get("_portfolio_holdings_key", "")
+        prev_text    = st.session_state.get("_portfolio_stocks_manual", "")
 
-        def _norm(text):
-            return ",".join(sorted(t.strip().upper() for t in text.splitlines() if t.strip()))
-
-        # Only preserve a manual edit when: holdings haven't changed AND the
-        # textarea has been deliberately altered away from the canonical list.
+        # User has manually edited if: we've synced before, holdings haven't
+        # changed, but the last-saved manual text differs from canonical.
         user_edited = (
             prev_key != ""
             and held_key == prev_key
-            and _norm(current_text) != _norm(canonical)
+            and _norm(prev_text) != _norm(canonical)
+            and prev_text.strip() != ""
         )
 
-        if not user_edited:
-            st.session_state["portfolio_stocks_input"]  = canonical
-            st.session_state["_portfolio_holdings_key"] = held_key
-
+        stocks_default = prev_text if user_edited else canonical
+        st.session_state["_portfolio_holdings_key"] = held_key
         auto_sourced = True
     else:
-        auto_sourced = False
-        if "portfolio_stocks_input" not in st.session_state:
-            st.session_state["portfolio_stocks_input"] = "ASML\nCVX\nGOOGL\nMSFT\nSTRL\nTSM"
+        auto_sourced   = False
+        stocks_default = st.session_state.get(
+            "_portfolio_stocks_manual",
+            "ASML\nCVX\nGOOGL\nMSFT\nSTRL\nTSM",
+        )
 
     # ── Configuration panel ───────────────────────────────────────────────────
     with st.expander("Configure optimizer", expanded=st.session_state.get("portfolio_last_results") is None):
@@ -511,11 +523,13 @@ def render_portfolio_monte_carlo(holdings: dict = None):
 
             stocks_input = st.text_area(
                 "stocks",
-                key="portfolio_stocks_input",
-                height=_stocks_textarea_height(st.session_state.get("portfolio_stocks_input", "")),
+                value=stocks_default,
+                height=_stocks_textarea_height(stocks_default),
                 label_visibility="collapsed",
                 placeholder="AAPL\nMSFT\nNVDA\n...",
             )
+            # Persist whatever the user currently has so we can detect edits next run
+            st.session_state["_portfolio_stocks_manual"] = stocks_input
 
             st.markdown('<p class="cfg-label" style="margin-top:10px;">Bond hedge</p>', unsafe_allow_html=True)
             bonds_input = st.text_input(
