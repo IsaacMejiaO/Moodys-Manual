@@ -764,24 +764,24 @@ def render_portfolio_monte_carlo(holdings: dict = None):
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
         st.markdown(_metric_card("Expected Return", f"{ret_sign}{port_return*100:.1f}%",
-            ret_color, tooltip="Model-blended annualized expected return."), unsafe_allow_html=True)
+            ret_color, tooltip="Model-blended annualized return."), unsafe_allow_html=True)
     with c2:
         hist_color = UP if annual_ret >= 0 else DOWN
         st.markdown(_metric_card("Historical Return", f"{'+' if annual_ret>=0 else ''}{annual_ret*100:.1f}%",
-            hist_color, tooltip="Actual annualized return earned over the look-back window."), unsafe_allow_html=True)
+            hist_color, tooltip="Annualized return earned."), unsafe_allow_html=True)
     with c3:
         st.markdown(_metric_card("Volatility", f"{port_vol_val*100:.1f}%",
             ORANGE if port_vol_val < 0.25 else DOWN, tooltip="Annualized portfolio standard deviation."), unsafe_allow_html=True)
     with c4:
         sh_color = UP if sharpe >= 1 else (ORANGE if sharpe >= 0.5 else DOWN)
         st.markdown(_metric_card("Sharpe Ratio", f"{sharpe:.2f}",
-            sh_color, tooltip="Return per unit of risk above a 2% risk-free rate. Above 1 is good."), unsafe_allow_html=True)
+            sh_color, tooltip="Return per unit of risk above a 2% RFR."), unsafe_allow_html=True)
     with c5:
         st.markdown(_metric_card("CDaR (5%)", f"{port_cdar*100:.1f}%",
             DOWN if port_cdar > 0.15 else ORANGE, tooltip="Average of the 5% worst drawdowns."), unsafe_allow_html=True)
     with c6:
         st.markdown(_metric_card("CVaR (5%)", f"{port_cvar*100:.1f}%",
-            DOWN if port_cvar > 0.03 else ORANGE, tooltip="Expected daily loss in the worst 5% of days."), unsafe_allow_html=True)
+            DOWN if port_cvar > 0.03 else ORANGE, tooltip="Daily loss in the worst 5% of days."), unsafe_allow_html=True)
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
     tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Volatility"])
