@@ -428,21 +428,26 @@ def _vol_verdict(v: float):
     return "Very volatile", DOWN
 
 
+def _stocks_textarea_height(text: str) -> int:
+    """
+    Return a pixel height for the stocks text area that fits its content exactly.
+    One ticker per line; min 3 rows, max 20 rows.
+    Row height ≈ 24 px, plus ~20 px for padding.
+    """
+    lines = max(3, min(20, len([l for l in text.splitlines() if l.strip()])))
+    return lines * 24 + 20
+
+
 def render_portfolio_monte_carlo(holdings: dict = None):
     """
     Render the Portfolio Optimizer.
 
-    When called from inside the Performance page's Portfolio tab,
-    pass the current holdings dict (from _current_holdings()) so that
-    the stocks text area is pre-populated automatically.
-
-    When called standalone (direct page route), holdings=None and
-    the user fills in tickers manually.
+    Pass holdings (from _current_holdings()) to auto-populate tickers
+    from the What Do I Own? tab.  holdings=None falls back to manual entry.
     """
-    # ── CSS (only injected when called standalone; Performance page already injects it) ──
     _inject_css()
 
-    # ── Compact config styles ─────────────────────────────────────────────────
+    # ── Config-panel styles ───────────────────────────────────────────────────
     st.markdown(f"""
     <style>
     .cfg-label {{
@@ -451,31 +456,25 @@ def render_portfolio_monte_carlo(holdings: dict = None):
         margin: 0 0 4px 0; line-height: 1;
     }}
     .cfg-hint {{
-        font-size: 11px; color: rgba(255,255,255,0.32);
-        margin: 2px 0 0 0; line-height: 1.35;
+        font-size: 11px; color: rgba(255,255,255,0.3);
+        margin: 2px 0 0 0; line-height: 1.3;
     }}
-    .holdings-source-badge {{
-        display: inline-block;
-        font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
-        text-transform: uppercase; padding: 2px 8px; border-radius: 20px;
+    .holdings-badge {{
+        display: inline-block; font-size: 10px; font-weight: 700;
+        letter-spacing: 0.06em; text-transform: uppercase;
+        padding: 1px 7px; border-radius: 20px;
         background: rgba(10,124,255,0.18); color: {BLUE};
-        border: 1px solid rgba(10,124,255,0.35); margin-left: 8px;
+        border: 1px solid rgba(10,124,255,0.35); margin-left: 6px;
         vertical-align: middle;
     }}
     </style>
     """, unsafe_allow_html=True)
 
     # ── Auto-populate stocks from current holdings ────────────────────────────
-    # If holdings are passed in (from the Performance page), seed the text area
-    # with the tickers the user actually owns — but only on the first render or
-    # when the holdings set has changed (so manual edits are not overwritten).
     if holdings:
         held_tickers = sorted(holdings.keys())
         held_key     = ",".join(held_tickers)
-        prev_key     = st.session_state.get("_portfolio_holdings_key", "")
-
-        if held_key != prev_key:
-            # Holdings changed (or first render) — refresh the text area seed.
+        if held_key != st.session_state.get("_portfolio_holdings_key", ""):
             st.session_state["portfolio_stocks_input"]  = "\n".join(held_tickers)
             st.session_state["_portfolio_holdings_key"] = held_key
         auto_sourced = True
@@ -484,37 +483,63 @@ def render_portfolio_monte_carlo(holdings: dict = None):
         if "portfolio_stocks_input" not in st.session_state:
             st.session_state["portfolio_stocks_input"] = "ASML\nCVX\nGOOGL\nMSFT\nSTRL\nTSM"
 
-    # ── Configuration panel (horizontal, compact) ─────────────────────────────
-    with st.expander("⚙️  Configure optimizer", expanded=st.session_state.get("portfolio_last_results") is None):
+    # ── Configuration panel ───────────────────────────────────────────────────
+    with st.expander("Configure optimizer", expanded=st.session_state.get("portfolio_last_results") is None):
 
-        col_stocks, col_bond, col_risk, col_years = st.columns([2, 1, 2, 1], gap="medium")
+        col_left, col_mid, col_right = st.columns([1, 1, 1], gap="large")
 
-        with col_stocks:
-            badge = '<span class="holdings-source-badge">auto</span>' if auto_sourced else ""
+        # ── LEFT: Stocks + Bond hedge ─────────────────────────────────────────
+        with col_left:
+            badge = '<span class="holdings-badge">auto</span>' if auto_sourced else ""
             st.markdown(f'<p class="cfg-label">Stocks {badge}</p>', unsafe_allow_html=True)
+
             stocks_input = st.text_area(
                 "stocks",
                 key="portfolio_stocks_input",
-                height=110,
+                height=_stocks_textarea_height(st.session_state.get("portfolio_stocks_input", "")),
                 label_visibility="collapsed",
                 placeholder="AAPL\nMSFT\nNVDA\n...",
             )
-            if auto_sourced:
-                st.markdown('<p class="cfg-hint">Pre-filled from your current holdings — edit freely</p>',
-                            unsafe_allow_html=True)
-            else:
-                st.markdown('<p class="cfg-hint">One ticker per line</p>', unsafe_allow_html=True)
 
-        with col_bond:
-            st.markdown('<p class="cfg-label">Bond hedge</p>', unsafe_allow_html=True)
+            st.markdown('<p class="cfg-label" style="margin-top:10px;">Bond hedge</p>', unsafe_allow_html=True)
             bonds_input = st.text_input(
                 "bond", value="VGIT",
                 label_visibility="collapsed",
-                placeholder="VGIT",
+                placeholder="VGIT or leave blank",
             )
-            st.markdown('<p class="cfg-hint">Leave blank for equity-only</p>', unsafe_allow_html=True)
 
-        with col_risk:
+        # Build asset lists here so col_mid can use them
+        stocks = [s.strip().upper() for s in stocks_input.split("\n") if s.strip()]
+        bonds  = [bonds_input.strip().upper()] if bonds_input.strip() else []
+        assets = stocks + bonds
+        mc_sims = 3000
+
+        # ── MIDDLE: Expected annual returns ───────────────────────────────────
+        with col_mid:
+            st.markdown('<p class="cfg-label">Expected annual returns</p>', unsafe_allow_html=True)
+            dcf_returns = {}
+            if assets:
+                pairs = [assets[i:i+2] for i in range(0, len(assets), 2)]
+                for pair in pairs:
+                    r_cols = st.columns(2)
+                    for r_col, asset in zip(r_cols, pair):
+                        with r_col:
+                            default_val = 0.12 if asset in stocks else 0.03
+                            dcf_returns[asset] = st.number_input(
+                                asset,
+                                min_value=0.0, max_value=1.0,
+                                value=default_val, step=0.01,
+                                format="%.2f",
+                                key=f"dcf_{asset}",
+                            )
+            else:
+                st.markdown(
+                    '<p class="cfg-hint" style="margin-top:6px;">Add tickers on the left first.</p>',
+                    unsafe_allow_html=True,
+                )
+
+        # ── RIGHT: Risk appetite + History + Run ─────────────────────────────
+        with col_right:
             st.markdown('<p class="cfg-label">Risk appetite</p>', unsafe_allow_html=True)
             risk_appetite = st.slider(
                 "risk", min_value=0.0, max_value=1.0, value=0.75, step=0.05,
@@ -529,49 +554,19 @@ def render_portfolio_monte_carlo(holdings: dict = None):
                 "Aggressive"
             )
             st.markdown(
-                f'<p class="cfg-hint">{risk_label} &nbsp;·&nbsp; {risk_pct}% equity / {100-risk_pct}% bonds</p>',
+                f'<p class="cfg-hint">{risk_label} · {risk_pct}% equity / {100-risk_pct}% bonds</p>',
                 unsafe_allow_html=True,
             )
 
-        with col_years:
-            st.markdown('<p class="cfg-label">History</p>', unsafe_allow_html=True)
+            st.markdown('<p class="cfg-label" style="margin-top:10px;">History</p>', unsafe_allow_html=True)
             years_back = st.slider(
                 "years", min_value=5, max_value=30, value=25, step=1,
                 label_visibility="collapsed",
             )
-            st.markdown(f'<p class="cfg-hint">{years_back} yrs</p>', unsafe_allow_html=True)
+            st.markdown(f'<p class="cfg-hint">{years_back} years</p>', unsafe_allow_html=True)
 
-        # ── Expected returns (tucked away — advanced) ─────────────────────────
-        stocks = [s.strip().upper() for s in stocks_input.split("\n") if s.strip()]
-        bonds  = [bonds_input.strip().upper()] if bonds_input.strip() else []
-        assets = stocks + bonds
-        mc_sims = 3000
-
-        dcf_returns = {}
-        if assets:
-            st.markdown(
-                '<p class="cfg-label" style="margin-top:12px;">Expected annual returns</p>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                '<p class="cfg-hint" style="margin-bottom:8px;">Adjust if you have a thesis; defaults are 12% equities / 3% bonds</p>',
-                unsafe_allow_html=True,
-            )
-            ret_cols = st.columns(min(len(assets), 6))
-            for i, asset in enumerate(assets):
-                with ret_cols[i % len(ret_cols)]:
-                    default_val = 0.12 if asset in stocks else 0.03
-                    dcf_returns[asset] = st.number_input(
-                        asset,
-                        min_value=0.0, max_value=1.0,
-                        value=default_val, step=0.01,
-                        format="%.2f",
-                        key=f"dcf_{asset}",
-                    )
-
-        # ── Run button ────────────────────────────────────────────────────────
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        run_button = st.button("▶  Run Optimization", type="primary", use_container_width=False)
+            st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+            run_button = st.button("Run Optimization", type="primary", use_container_width=True)
 
     if not assets:
         st.warning("Add at least one stock ticker on the left to get started.")
