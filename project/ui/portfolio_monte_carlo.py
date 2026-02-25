@@ -764,7 +764,7 @@ def render_portfolio_monte_carlo(holdings: dict = None):
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
         st.markdown(_metric_card("Expected Return", f"{ret_sign}{port_return*100:.1f}%",
-            ret_color, tooltip="Model-blended annualized return."), unsafe_allow_html=True)
+            ret_color, tooltip="Expected annualized return."), unsafe_allow_html=True)
     with c2:
         hist_color = UP if annual_ret >= 0 else DOWN
         st.markdown(_metric_card("Historical Return", f"{'+' if annual_ret>=0 else ''}{annual_ret*100:.1f}%",
