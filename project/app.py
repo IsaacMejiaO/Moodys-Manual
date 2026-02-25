@@ -1183,6 +1183,36 @@ elif st.session_state["page"] == "dashboard":
             selection_mode="single-row",
         )
 
+        # ── Center cells for Gross Margin % through FCF Yield % ──────────────
+        # AG Grid renders each column as a div with aria-colindex (1-based).
+        # We compute the index range and inject nth-child CSS to center them.
+        _cols = list(df_display.columns)
+        if "Gross Margin %" in _cols and "FCF Yield %" in _cols:
+            _start = _cols.index("Gross Margin %") + 1   # aria-colindex is 1-based
+            _end   = _cols.index("FCF Yield %") + 1
+            _center_selectors = ", ".join(
+                f'[data-testid="stDataFrame"] .ag-cell[aria-colindex="{i}"]'
+                for i in range(_start, _end + 1)
+            )
+            _header_selectors = ", ".join(
+                f'[data-testid="stDataFrame"] .ag-header-cell[aria-colindex="{i}"] .ag-header-cell-label'
+                for i in range(_start, _end + 1)
+            )
+            st.markdown(
+                f"""
+                <style>
+                {_center_selectors} {{
+                    text-align: center !important;
+                    justify-content: center !important;
+                }}
+                {_header_selectors} {{
+                    justify-content: center !important;
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+
         # Handle row click — update selected ticker immediately
         selected_rows = event.selection.rows
         if selected_rows:
