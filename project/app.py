@@ -1019,6 +1019,8 @@ elif st.session_state["page"] == "dashboard":
             "Total D/E", "Total D/Capital", "LT D/E", "LT D/Capital",
             "Total Liab/Assets", "EBIT/Interest", "EBITDA/Interest",
             "Total Debt/Interest", "Net Debt/Interest", "Altman Z-Score",
+            # Valuation multiples — removed from screener
+            "PE LTM", "EV/Revenue", "EV/EBITDA", "EV/EBIT",
             "Revenue YoY %", "Gross Profit YoY %", "EBIT YoY %", "EBITDA YoY %",
             "Net Income YoY %", "EPS YoY %", "Diluted EPS YoY %", "AR YoY %",
             "Inventory YoY %", "Net PP&E YoY %", "Total Assets YoY %",
@@ -1042,6 +1044,14 @@ elif st.session_state["page"] == "dashboard":
         for col in columns_to_remove:
             if col in df_adj.columns:
                 df_adj = df_adj.drop(columns=[col])
+
+        # ── Reorder: move FCF Yield % to immediately follow LFCF 3yr CAGR % ──
+        if "FCF Yield %" in df_adj.columns and "LFCF 3yr CAGR %" in df_adj.columns:
+            cols = list(df_adj.columns)
+            cols.remove("FCF Yield %")
+            insert_at = cols.index("LFCF 3yr CAGR %") + 1
+            cols.insert(insert_at, "FCF Yield %")
+            df_adj = df_adj[cols]
 
         # ── Keep numeric columns as numbers (enables proper sort) ─────────────
         # Margins arrive as raw % values (e.g. 45.2 means 45.2%). No conversion needed.
@@ -1102,8 +1112,8 @@ elif st.session_state["page"] == "dashboard":
             "Net Margin %", "ROIC %", "FCF Yield %",
             "Revenue 2yr CAGR %", "Revenue 3yr CAGR %", "LFCF 3yr CAGR %",
         }
-        # Ratio / plain-number columns (PEG, PE)
-        ratio_cols = {"PEG (PE LTM)", "PEG (Lynch)", "PE LTM"}
+        # Ratio / plain-number columns (PEG)
+        ratio_cols = {"PEG (PE LTM)", "PEG (Lynch)"}
         # Market cap: large integer formatted with commas
         mktcap_cols = {"Market Cap (M)"}
 
