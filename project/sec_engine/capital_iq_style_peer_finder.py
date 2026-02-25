@@ -40,6 +40,7 @@ except Exception:
     cosine_similarity = None
 
 from sec_engine.sec_fetch import fetch_company_submissions, fetch_company_facts
+from sec_engine.peer_finder import get_peer_override
 from sec_engine.cik_loader import load_full_cik_map
 from sec_engine.normalize import GAAP_MAP
 from sec_engine.ltm import extract_annual_series
@@ -1394,6 +1395,38 @@ def discover_peers_capital_iq_style(
     Returns:
         List of peer dictionaries with scores and profiles
     """
+    # ── Analyst override check ─────────────────────────────────────────────
+    # If an explicit peer list is registered for this ticker (via
+    # peer_finder.set_peer_override() or PEER_OVERRIDES), return it
+    # immediately. This bypasses all NLP/scoring heuristics for tickers
+    # where analyst judgment is more reliable (conglomerates, holding
+    # companies, miscategorized EDGAR SIC codes, etc.).
+    override = get_peer_override(ticker.upper().strip())
+    if override is not None:
+        # Wrap as the peer dict format callers expect
+        return [
+            {
+                "ticker": p,
+                "name": p,
+                "sector": "",
+                "industry": "",
+                "market_cap": 0,
+                "country": "",
+                "profile": {},
+                "business_description_score": 100.0,
+                "multiples_similarity_score": 100.0,
+                "revenue_scale_score": 100.0,
+                "profitability_score": 100.0,
+                "correlation_score": 100.0,
+                "liquidity_float_score": 100.0,
+                "composite_score": 100.0,
+                "base_screening_score": 100.0,
+                "source": "analyst_override",
+            }
+            for p in override[:max_peers]
+            if p != ticker.upper()
+        ]
+
     # ── Cache key includes universe hash so a change in the upload
     #    always triggers a fresh run (fixes stale cross-session results)
     uploaded_universe_norm = _normalize_ticker_list(uploaded_universe)
