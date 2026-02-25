@@ -452,7 +452,7 @@ def render_portfolio_monte_carlo(holdings: dict = None):
     <style>
     .cfg-label {{
         font-size: 11px; font-weight: 700; letter-spacing: 0.07em;
-        text-transform: uppercase; color: rgba(255,255,255,0.4);
+        text-transform: uppercase; color: rgba(255,255,255,1.0);
         margin: 0 0 4px 0; line-height: 1;
     }}
     .cfg-hint {{
