@@ -1113,6 +1113,11 @@ elif st.session_state["page"] == "dashboard":
             "Revenue 2yr CAGR %", "Revenue 3yr CAGR %",
             "LFCF 3yr CAGR %",
         }
+        # PEG ratios: multiply by 100 so 0.73 → 73%, 1.69 → 169%
+        for peg_col in ("PEG (PE LTM)", "PEG (Lynch)"):
+            if peg_col in df_display.columns:
+                df_display[peg_col] = pd.to_numeric(df_display[peg_col], errors="coerce") * 100
+
         # PEG ratios: two decimal places, no % sign
         ratio_cols = {"PEG (PE LTM)", "PEG (Lynch)"}
         # Market cap: large integer formatted with commas
@@ -1143,7 +1148,7 @@ elif st.session_state["page"] == "dashboard":
                 )
             elif col in ratio_cols:
                 column_config[col] = st.column_config.NumberColumn(
-                    col, format="%.2f", width="small"
+                    col, format="%.0f%%", width="small"
                 )
             else:
                 column_config[col] = st.column_config.NumberColumn(
