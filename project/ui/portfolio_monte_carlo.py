@@ -575,25 +575,11 @@ def render_portfolio_monte_carlo(holdings: dict = None):
                 "risk", min_value=0.0, max_value=1.0, value=0.75, step=0.05,
                 label_visibility="collapsed",
             )
-            risk_pct   = int(risk_appetite * 100)
-            risk_label = (
-                "Very conservative" if risk_pct <= 20 else
-                "Conservative"      if risk_pct <= 40 else
-                "Balanced"          if risk_pct <= 60 else
-                "Growth"            if risk_pct <= 80 else
-                "Aggressive"
-            )
-            st.markdown(
-                f'<p class="cfg-hint">{risk_label} · {risk_pct}% equity / {100-risk_pct}% bonds</p>',
-                unsafe_allow_html=True,
-            )
-
             st.markdown('<p class="cfg-label" style="margin-top:10px;">History</p>', unsafe_allow_html=True)
             years_back = st.slider(
                 "years", min_value=5, max_value=30, value=25, step=1,
                 label_visibility="collapsed",
             )
-            st.markdown(f'<p class="cfg-hint">{years_back} years</p>', unsafe_allow_html=True)
 
             st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
             run_button = st.button("Run Optimization", type="primary", use_container_width=True)
