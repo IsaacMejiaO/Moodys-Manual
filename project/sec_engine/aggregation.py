@@ -1,510 +1,239 @@
-# aggregation.py
-# ------------------------------------------------------------------
-# Builds the per-company summary dictionary used by the screener,
-# tearsheet, multiples, and ratios pages.
-#
-# Fixes vs. prior version:
-#   - capex sign normalization is now source-aware: yfinance returns
-#     capex as a negative cash outflow; SEC tags are positive outflows.
-#     The caller (fetch_company_data_unified) passes a "capex_source"
-#     flag so we only abs() when the value came from yfinance.
-#   - All nan-safe arithmetic replaces (x or 0) with nan_to_zero(x),
-#     which correctly handles float 0.0 without treating it as falsy.
-#   - ROIC tax rate (21%) is now defined in sec_engine/constants.py and
-#     imported from there, so all modules share a single source of truth.
-#   - EBITDA fallback documents that D&A from the cashflow statement
-#     may include non-depreciation items; this is disclosed in the
-#     data_quality dict returned alongside the summary.
-#   - A "Data As Of" field is derived from the most recent quarter-end
-#     in the revenue quarterly series and surfaced in the summary.
-#
-# Bug fixes (current version):
-#   - UFCF is now correctly computed as LFCF + interest×(1−t) instead
-#     of incorrectly aliasing LFCF, which produced identical values in
-#     both the LFCF and UFCF columns.
-#   - working_capital and capital_employed now use 'or' (not 'and') so
-#     that a single missing component returns NaN rather than silently
-#     substituting 0 via nan_to_zero and producing a misleading figure.
-#   - net_debt is now guarded: if debt is NaN the result is NaN, not
-#     0 - cash = -cash, which looked like genuine negative net debt.
-#
-# Per-ticker tax rate (current version):
-#   - build_company_summary() now accepts an optional tax_rate parameter.
-#     When provided, it overrides both the TICKER_TAX_RATE_OVERRIDES registry
-#     and the 21% statutory default for NOPAT and UFCF computation.
-#     Resolution order: explicit arg > registry override > 21% default.
-#   - The resolved rate is surfaced as "Effective Tax Rate" in the returned
-#     summary dict so callers can always audit which rate was used.
-# ------------------------------------------------------------------
-
-from sec_engine.metrics import (
-    margins,
-    ebitda_margin,
-    sga_margin,
-    rd_margin,
-    lfcf_margin,
-    ufcf_margin,
-    capex_as_pct_revenue,
-    roa,
-    roic,
-    roe,
-    rce,
-    total_asset_turnover,
-    accounts_receivable_turnover,
-    inventory_turnover,
-    current_ratio,
-    quick_ratio,
-    days_sales_outstanding,
-    days_inventory_outstanding,
-    days_payable_outstanding,
-    cash_conversion_cycle,
-    total_debt_to_equity,
-    total_debt_to_capital,
-    lt_debt_to_equity,
-    lt_debt_to_capital,
-    total_liabilities_to_assets,
-    ebit_to_interest,
-    ebitda_to_interest,
-    total_debt_to_interest,
-    net_debt_to_interest,
-    altman_z_score,
-    series_cagr,
-    yoy_growth,
-    fcf,
-    fcf_yield,
-    peg_pe_ltm,
-    peg_lynch,
-)
-from sec_engine.constants import NOPAT_TAX_RATE, get_effective_tax_rate
-import numpy as np
 import pandas as pd
+import numpy as np
+from typing import List, Dict
+from sec_engine.sec_fetch import fetch_company_submissions
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Peer Override Registry ────────────────────────────────────────────────────
+#
+# Maps a ticker to an explicit ordered list of peer tickers.
+# When present, find_peers_by_sic() returns this list DIRECTLY, bypassing all
+# SIC-matching and market-cap heuristics.
+#
+# Use cases:
+#   - Conglomerates (e.g. BRK-B) where SIC codes are meaningless
+#   - Holding companies that span multiple industries
+#   - Tickers whose EDGAR SIC code is incorrect or extremely broad
+#   - Any company where analyst judgment should override the algorithm
+#
+# Populate either by editing the dict below or by calling set_peer_override()
+# at runtime (e.g. in a notebook or app startup).
+#
+# Format: { "TICKER": ["PEER1", "PEER2", ...] }  — all values stored uppercase.
+#
+PEER_OVERRIDES: Dict[str, List[str]] = {
+    # ── Examples (commented out — uncomment and customise) ──────────────────
+    # "BRK-B": ["JPM", "BAC", "AIG", "MET", "PRU", "GS", "MS"],
+    # "GE":    ["HON", "MMM", "RTX", "EMR", "ITW", "ETN", "PH"],
+}
 
-def nz(x):
-    """Normalize None → np.nan, pass through everything else."""
-    return np.nan if x is None else x
 
-
-def nan_to_zero(x):
-    """Return 0.0 if x is NaN or None, otherwise return x.
-    Unlike (x or 0), this correctly handles float 0.0 without zeroing it.
+def set_peer_override(ticker: str, peers: List[str]) -> None:
     """
-    if x is None:
-        return 0.0
+    Register an explicit peer list for a ticker at runtime.
+
+    The provided list replaces ALL algorithmic peer-finding for this ticker.
+    Peers are deduplicated and upper-cased automatically. Passing an empty
+    list clears the override (same as clear_peer_override).
+
+    Args:
+        ticker: Target ticker (case-insensitive).
+        peers:  Ordered list of peer tickers.
+
+    Example:
+        set_peer_override("BRK-B", ["JPM", "BAC", "GS", "AIG"])
+    """
+    ticker = ticker.upper().strip()
+    if not peers:
+        PEER_OVERRIDES.pop(ticker, None)
+        return
+    seen = set()
+    cleaned = []
+    for p in peers:
+        p = str(p).upper().strip()
+        if p and p != ticker and p not in seen:
+            seen.add(p)
+            cleaned.append(p)
+    PEER_OVERRIDES[ticker] = cleaned
+
+
+def clear_peer_override(ticker: str) -> None:
+    """
+    Remove the peer override for a ticker, reverting to heuristic discovery.
+
+    Args:
+        ticker: Target ticker (case-insensitive).
+    """
+    PEER_OVERRIDES.pop(ticker.upper().strip(), None)
+
+
+def list_peer_overrides() -> Dict[str, List[str]]:
+    """Return a copy of the current peer override registry."""
+    return {k: list(v) for k, v in PEER_OVERRIDES.items()}
+
+
+def get_peer_override(ticker: str):
+    """
+    Return the explicit peer list for a ticker, or None if not overridden.
+
+    Args:
+        ticker: Target ticker (case-insensitive).
+
+    Returns:
+        List of peer tickers if an override is registered, else None.
+    """
+    return PEER_OVERRIDES.get(ticker.upper().strip())
+
+
+def _parse_market_cap(value) -> float:
+    """
+    Robustly parse a market-cap value that may be a float, int, or a
+    formatted string (e.g. "1,234,567" or "1234567").
+
+    Returns np.nan for any value that cannot be converted to a finite float,
+    so that callers can safely filter on pd.notna() rather than catching
+    exceptions.
+    """
+    if value is None:
+        return np.nan
     try:
-        return 0.0 if np.isnan(x) else float(x)
+        result = pd.to_numeric(str(value).replace(",", "").strip(), errors="coerce")
+        return float(result) if pd.notna(result) else np.nan
     except (TypeError, ValueError):
-        return 0.0
-
-
-def _series_last_date(series) -> str:
-    """Return the most recent index date of a Series as a string, or ''."""
-    if series is None or not isinstance(series, pd.Series) or series.empty:
-        return ""
-    try:
-        return str(series.dropna().sort_index().index[-1].date())
-    except Exception:
-        return ""
-
-
-# ── Main builder ──────────────────────────────────────────────────────────────
-
-def build_company_summary(
-    ticker: str,
-    ltm_data: dict,
-    balance_data: dict,
-    metadata: dict,
-    revenue_history: pd.Series | None,
-    lfcf_history: pd.Series | None,
-    gross_profit_history: pd.Series | None = None,
-    ebit_history: pd.Series | None = None,
-    ebitda_history: pd.Series | None = None,
-    net_income_history: pd.Series | None = None,
-    eps_history: pd.Series | None = None,
-    diluted_eps_history: pd.Series | None = None,
-    ar_history: pd.Series | None = None,
-    inventory_history: pd.Series | None = None,
-    ppe_history: pd.Series | None = None,
-    total_assets_history: pd.Series | None = None,
-    total_liabilities_history: pd.Series | None = None,
-    equity_history: pd.Series | None = None,
-    # Source flags for sign normalization
-    capex_from_yfinance: bool = True,
-    # Per-ticker effective tax rate override.
-    # Pass a float (e.g. 0.12) to use a company-specific rate for NOPAT
-    # and UFCF. Pass None to use get_effective_tax_rate(ticker), which
-    # checks the TICKER_TAX_RATE_OVERRIDES registry in constants.py
-    # before falling back to the 21% statutory default.
-    tax_rate: float | None = None,
-) -> dict:
-
-    # Resolve tax rate: explicit arg > registry override > statutory default
-    effective_tax_rate = tax_rate if tax_rate is not None else get_effective_tax_rate(ticker)
-
-    # ── Income statement (LTM) ────────────────────────────────────────────────
-    revenue          = nz(ltm_data.get("revenue"))
-    gross_profit     = nz(ltm_data.get("gross_profit"))
-    ebit             = nz(ltm_data.get("operating_income"))
-    net_income       = nz(ltm_data.get("net_income"))
-    sga              = nz(ltm_data.get("sga"))
-    rd               = nz(ltm_data.get("rd"))
-    cogs             = nz(ltm_data.get("cogs"))
-    interest_expense = nz(ltm_data.get("interest_expense"))
-    ocf              = nz(ltm_data.get("ocf"))
-    capex            = nz(ltm_data.get("capex"))
-
-    # Sign normalization: yfinance reports capex as a negative number
-    # (cash *outflow*); SEC tags are defined as positive outflows.
-    # We normalize to positive so that FCF = OCF - capex is correct
-    # regardless of source, but only flip the sign when needed.
-    if not np.isnan(capex) and capex < 0 and capex_from_yfinance:
-        capex = abs(capex)
-
-    # ── EBITDA ────────────────────────────────────────────────────────────────
-    ebitda = nz(ltm_data.get("ebitda"))
-    ebitda_source = "direct"
-
-    if np.isnan(ebitda):
-        # Fallback: EBIT + D&A from cashflow statement.
-        # Note: the D&A line in the cashflow statement sometimes includes
-        # non-depreciation items (amortization of debt issuance costs,
-        # stock-comp-related amortization). This is the standard
-        # approximation used by most data providers; flag it.
-        depreciation = nz(ltm_data.get("depreciation"))
-        amortization = nz(ltm_data.get("amortization"))
-
-        if not np.isnan(ebit):
-            da_total = nan_to_zero(depreciation) + nan_to_zero(amortization)
-            if da_total > 0:
-                ebitda = ebit + da_total
-                ebitda_source = "computed: EBIT + D&A"
-            else:
-                ebitda = np.nan
-                ebitda_source = "unavailable"
-        else:
-            ebitda = np.nan
-            ebitda_source = "unavailable"
-
-    # ── Balance sheet ─────────────────────────────────────────────────────────
-    debt              = nz(balance_data.get("debt"))
-    equity            = nz(balance_data.get("equity"))
-    cash              = nz(balance_data.get("cash"))
-    total_assets      = nz(balance_data.get("total_assets"))
-    total_liabilities = nz(balance_data.get("total_liabilities"))
-    current_assets    = nz(balance_data.get("current_assets"))
-    current_liabilities = nz(balance_data.get("current_liabilities"))
-    accounts_receivable = nz(balance_data.get("accounts_receivable"))
-    inventory         = nz(balance_data.get("inventory"))
-    accounts_payable  = nz(balance_data.get("accounts_payable"))
-    lt_debt           = nz(balance_data.get("long_term_debt"))
-    retained_earnings = nz(balance_data.get("retained_earnings"))
-    ppe               = nz(balance_data.get("ppe"))
-
-    # Guard: return NaN if EITHER component is missing.
-    # The prior 'and' condition only returned NaN when both were NaN,
-    # causing nan_to_zero to substitute 0 for the missing side and produce
-    # a misleading result (e.g. working_capital = 0 - current_liabilities).
-    working_capital = (
-        nan_to_zero(current_assets) - nan_to_zero(current_liabilities)
-        if not (np.isnan(current_assets) or np.isnan(current_liabilities))
-        else np.nan
-    )
-
-    # Guard: if debt is unknown, net_debt is unknown — don't produce -cash.
-    # nan_to_zero(debt) would give 0 when debt is missing, making net_debt
-    # appear negative for cash-rich companies with no reported debt data.
-    if not np.isnan(debt):
-        net_debt = nan_to_zero(debt) - nan_to_zero(cash)
-    else:
-        net_debt = np.nan
-
-    # Guard: return NaN if EITHER component is missing (same logic as working_capital).
-    capital_employed = (
-        nan_to_zero(total_assets) - nan_to_zero(current_liabilities)
-        if not (np.isnan(total_assets) or np.isnan(current_liabilities))
-        else np.nan
-    )
-
-    # ── yfinance metadata ─────────────────────────────────────────────────────
-    market_cap       = nz(metadata.get("market_cap"))
-    pe_ltm           = nz(metadata.get("pe_ltm"))
-    eps_growth_pct   = nz(metadata.get("eps_growth_pct"))
-    dividend_yield_pct = nz(metadata.get("dividend_yield_pct"))
-
-    # ── ROIC ──────────────────────────────────────────────────────────────────
-    nopat = ebit * (1 - effective_tax_rate) if not np.isnan(ebit) else np.nan
-    invested_capital = nan_to_zero(debt) + nan_to_zero(equity) - nan_to_zero(cash)
-
-    # ── Margins ───────────────────────────────────────────────────────────────
-    margin_dict     = margins(revenue, gross_profit, ebit, net_income)
-    ebitda_margin_val = ebitda_margin(revenue, ebitda)
-    sga_margin_val  = sga_margin(revenue, sga)
-    rd_margin_val   = rd_margin(revenue, rd)
-
-    # ── FCF ───────────────────────────────────────────────────────────────────
-    fcf_value  = fcf(ocf, capex)
-    lfcf_value = fcf_value   # OCF is post-interest, so levered FCF = OCF − CapEx
-
-    # UFCF = LFCF + after-tax interest expense.
-    # Adding back interest×(1−t) converts the levered (post-interest) cash flow
-    # to an unlevered (pre-interest) figure, making it capital-structure-neutral.
-    # If interest_expense is unavailable we return NaN rather than silently
-    # treating it as 0 (which would make UFCF equal LFCF and mislead the user).
-    if (
-        not np.isnan(lfcf_value)
-        and not np.isnan(interest_expense)
-        and interest_expense != 0
-    ):
-        ufcf_value = lfcf_value + abs(interest_expense) * (1 - effective_tax_rate)
-    else:
-        ufcf_value = np.nan  # Cannot compute without interest expense
-
-    lfcf_margin_val  = lfcf_margin(revenue, lfcf_value)
-    ufcf_margin_val  = ufcf_margin(revenue, ufcf_value)
-    capex_pct_revenue = capex_as_pct_revenue(revenue, capex)
-
-    # ── Profitability ─────────────────────────────────────────────────────────
-    roa_val  = roa(net_income, total_assets)
-    roic_val = roic(nopat, invested_capital)
-    roe_val  = roe(net_income, equity)
-    rce_val  = rce(ebit, capital_employed)
-
-    # ── Turnover ──────────────────────────────────────────────────────────────
-    asset_turnover = total_asset_turnover(revenue, total_assets)
-    ar_turnover    = accounts_receivable_turnover(revenue, accounts_receivable)
-    inv_turnover   = inventory_turnover(cogs, inventory)
-
-    # ── Liquidity ─────────────────────────────────────────────────────────────
-    current_ratio_val = current_ratio(current_assets, current_liabilities)
-    quick_ratio_val   = quick_ratio(current_assets, inventory, current_liabilities)
-    dso = days_sales_outstanding(accounts_receivable, revenue)
-    dio = days_inventory_outstanding(inventory, cogs)
-    dpo = days_payable_outstanding(accounts_payable, cogs)
-    ccc = cash_conversion_cycle(dso, dio, dpo)
-
-    # ── Leverage ──────────────────────────────────────────────────────────────
-    total_de        = total_debt_to_equity(debt, equity)
-    total_d_cap     = total_debt_to_capital(debt, equity)
-    lt_de           = lt_debt_to_equity(lt_debt, equity)
-    lt_d_cap        = lt_debt_to_capital(lt_debt, equity)
-    liab_to_assets  = total_liabilities_to_assets(total_liabilities, total_assets)
-    ebit_interest   = ebit_to_interest(ebit, interest_expense)
-    ebitda_interest = ebitda_to_interest(ebitda, interest_expense)
-    total_debt_interest = total_debt_to_interest(debt, interest_expense)
-    net_debt_interest   = net_debt_to_interest(net_debt, interest_expense)
-    z_score = altman_z_score(
-        working_capital,
-        total_assets,
-        retained_earnings,
-        ebit,
-        # Altman's X4 = Market Value of Equity / Total Liabilities.
-        # For public companies, market value of equity = market cap.
-        # This is intentionally market_cap, NOT book equity.
-        market_cap,
-        total_liabilities,
-        revenue,
-    )
-
-    # ── Growth — YoY ─────────────────────────────────────────────────────────
-    def get_yoy(series):
-        if isinstance(series, pd.Series) and len(series) >= 2:
-            s = series.dropna().sort_index()
-            if len(s) >= 2:
-                return yoy_growth(s.iloc[-1], s.iloc[-2]) * 100
         return np.nan
 
-    revenue_yoy          = get_yoy(revenue_history)
-    gross_profit_yoy     = get_yoy(gross_profit_history)
-    ebit_yoy             = get_yoy(ebit_history)
-    ebitda_yoy           = get_yoy(ebitda_history)
-    net_income_yoy       = get_yoy(net_income_history)
-    eps_yoy              = get_yoy(eps_history)
-    diluted_eps_yoy      = get_yoy(diluted_eps_history)
-    ar_yoy               = get_yoy(ar_history)
-    inventory_yoy        = get_yoy(inventory_history)
-    ppe_yoy              = get_yoy(ppe_history)
-    total_assets_yoy     = get_yoy(total_assets_history)
-    total_liabilities_yoy = get_yoy(total_liabilities_history)
-    equity_yoy           = get_yoy(equity_history)
+def get_company_sic(cik: str) -> str:
+    """
+    Extract SIC code for a company
+    """
+    try:
+        submissions = fetch_company_submissions(cik)
+        return submissions.get('sic', '')
+    except:
+        return ''
 
-    # ── CAGR ──────────────────────────────────────────────────────────────────
-    def get_cagr(series, years):
-        if not isinstance(series, pd.Series):
-            return np.nan
-        s = series.dropna().sort_index()
-        return series_cagr(s, years) * 100
+def build_sic_map(universe: List[str], cik_map: Dict[str, str]) -> Dict[str, str]:
+    """
+    Build a mapping of ticker -> SIC code for entire universe
+    """
+    sic_map = {}
+    for ticker in universe:
+        cik = cik_map.get(ticker)
+        if cik:
+            sic = get_company_sic(cik)
+            if sic:
+                sic_map[ticker] = sic
+    return sic_map
 
-    revenue_cagr_2yr          = get_cagr(revenue_history, 2)
-    gross_profit_cagr_2yr     = get_cagr(gross_profit_history, 2)
-    ebit_cagr_2yr             = get_cagr(ebit_history, 2)
-    ebitda_cagr_2yr           = get_cagr(ebitda_history, 2)
-    net_income_cagr_2yr       = get_cagr(net_income_history, 2)
-    eps_cagr_2yr              = get_cagr(eps_history, 2)
-    diluted_eps_cagr_2yr      = get_cagr(diluted_eps_history, 2)
-    ar_cagr_2yr               = get_cagr(ar_history, 2)
-    inventory_cagr_2yr        = get_cagr(inventory_history, 2)
-    ppe_cagr_2yr              = get_cagr(ppe_history, 2)
-    total_assets_cagr_2yr     = get_cagr(total_assets_history, 2)
-    total_liabilities_cagr_2yr = get_cagr(total_liabilities_history, 2)
-    equity_cagr_2yr           = get_cagr(equity_history, 2)
+def find_peers_by_sic(
+    ticker: str,
+    sic_map: Dict[str, str],
+    df: pd.DataFrame,
+    min_peers: int = 3,
+    max_peers: int = 8
+) -> List[str]:
+    """
+    Find peer companies based on SIC code and similar market cap.
 
-    revenue_cagr_3yr          = get_cagr(revenue_history, 3)
-    gross_profit_cagr_3yr     = get_cagr(gross_profit_history, 3)
-    ebit_cagr_3yr             = get_cagr(ebit_history, 3)
-    ebitda_cagr_3yr           = get_cagr(ebitda_history, 3)
-    net_income_cagr_3yr       = get_cagr(net_income_history, 3)
-    eps_cagr_3yr              = get_cagr(eps_history, 3)
-    diluted_eps_cagr_3yr      = get_cagr(diluted_eps_history, 3)
-    ar_cagr_3yr               = get_cagr(ar_history, 3)
-    inventory_cagr_3yr        = get_cagr(inventory_history, 3)
-    ppe_cagr_3yr              = get_cagr(ppe_history, 3)
-    total_assets_cagr_3yr     = get_cagr(total_assets_history, 3)
-    total_liabilities_cagr_3yr = get_cagr(total_liabilities_history, 3)
-    equity_cagr_3yr           = get_cagr(equity_history, 3)
-    lfcf_cagr_3yr             = get_cagr(lfcf_history, 3)
+    Override check (first):
+        If an explicit peer list has been registered for this ticker via
+        set_peer_override() or PEER_OVERRIDES, it is returned immediately
+        without any heuristic logic. The returned list is capped at
+        max_peers but otherwise returned verbatim.
 
-    revenue_cagr_5yr          = get_cagr(revenue_history, 5)
-    gross_profit_cagr_5yr     = get_cagr(gross_profit_history, 5)
-    ebit_cagr_5yr             = get_cagr(ebit_history, 5)
-    ebitda_cagr_5yr           = get_cagr(ebitda_history, 5)
-    net_income_cagr_5yr       = get_cagr(net_income_history, 5)
-    eps_cagr_5yr              = get_cagr(eps_history, 5)
-    diluted_eps_cagr_5yr      = get_cagr(diluted_eps_history, 5)
-    ar_cagr_5yr               = get_cagr(ar_history, 5)
-    inventory_cagr_5yr        = get_cagr(inventory_history, 5)
-    ppe_cagr_5yr              = get_cagr(ppe_history, 5)
-    total_assets_cagr_5yr     = get_cagr(total_assets_history, 5)
-    total_liabilities_cagr_5yr = get_cagr(total_liabilities_history, 5)
-    equity_cagr_5yr           = get_cagr(equity_history, 5)
+    Heuristic fallback (when no override exists):
+        1. Match on the first 3 digits of the SIC code.
+        2. If fewer than min_peers found, broaden to 2 digits.
+        3. Sort by absolute market-cap distance from the target.
 
-    # ── Valuation ─────────────────────────────────────────────────────────────
-    market_cap_m    = market_cap / 1_000_000 if not np.isnan(market_cap) else np.nan
-    fcf_yield_pct   = fcf_yield(fcf_value, market_cap)
-    peg_ltm         = peg_pe_ltm(pe_ltm, eps_growth_pct)
-    peg_lynch_ratio = peg_lynch(pe_ltm, eps_growth_pct, dividend_yield_pct)
+    Args:
+        ticker: Target company ticker
+        sic_map: Dictionary mapping tickers to SIC codes
+        df: DataFrame with company data (must include 'Ticker' and 'Market Cap (M)')
+        min_peers: Minimum number of peers to return
+        max_peers: Maximum number of peers to return
+    """
+    ticker_upper = ticker.upper().strip()
 
-    # ── Data freshness ────────────────────────────────────────────────────────
-    # Surface the most recent period-end date so users know how current
-    # the LTM figures are. Uses revenue history as the anchor series.
-    data_as_of = _series_last_date(revenue_history)
+    # ── Analyst override check ────────────────────────────────────────────────
+    # If an explicit peer list is registered, return it immediately.
+    # This bypasses all SIC/market-cap heuristics for tickers where analyst
+    # judgment is more reliable (conglomerates, holding companies, etc.).
+    override = get_peer_override(ticker_upper)
+    if override is not None:
+        # Optionally filter to tickers known in df (safety check, not mandatory)
+        all_known = set(df['Ticker'].str.upper()) if not df.empty else set()
+        filtered = [p for p in override if not all_known or p in all_known]
+        result = filtered if filtered else override
+        return result[:max_peers]
 
-    # ── Final summary ─────────────────────────────────────────────────────────
-    return {
-        # ── Identity ──────────────────────────────────────────────────────────
-        "Company":        metadata.get("name"),
-        "Ticker":         ticker,
-        "Industry":       metadata.get("industry"),
-        "Market Cap (M)": market_cap_m,
-        "Data As Of":     data_as_of,
-        "Effective Tax Rate": effective_tax_rate,  # resolved rate used for NOPAT and UFCF
+    target_sic = sic_map.get(ticker)
+    
+    if not target_sic:
+        # Fallback: return all other companies
+        return [t for t in df['Ticker'].tolist() if t not in (ticker, ticker_upper)][:max_peers]
+    
+    # Get target company's market cap
+    target_row = df[df['Ticker'] == ticker]
+    if target_row.empty:
+        return []
+    
+    target_cap_str = target_row['Market Cap (M)'].iloc[0]
+    # Robust parsing: handles floats, ints, comma-formatted strings, None, NaN.
+    target_cap = _parse_market_cap(target_cap_str)
+    if np.isnan(target_cap):
+        # Cannot compute cap-distance without a valid target market cap;
+        # fall back to returning all same-industry peers unsorted.
+        return [t for t in df['Ticker'].tolist() if t != ticker][:max_peers]
+    
+    # Find companies with same SIC (first 3 digits for broader matching)
+    sic_prefix = target_sic[:3] if len(target_sic) >= 3 else target_sic
+    
+    same_industry = []
+    for t, sic in sic_map.items():
+        if t == ticker:
+            continue
+        if sic.startswith(sic_prefix):
+            same_industry.append(t)
+    
+    if len(same_industry) < min_peers:
+        # Broaden search to 2-digit SIC
+        sic_prefix = target_sic[:2] if len(target_sic) >= 2 else target_sic
+        same_industry = []
+        for t, sic in sic_map.items():
+            if t == ticker:
+                continue
+            if sic.startswith(sic_prefix):
+                same_industry.append(t)
+    
+    if not same_industry:
+        # Ultimate fallback
+        return [t for t in df['Ticker'].tolist() if t != ticker][:max_peers]
 
-        # ── Profitability ──────────────────────────────────────────────────────
-        "ROA %":  roa_val,
-        "ROIC %": roic_val,
-        "ROE %":  roe_val,
-        "RCE %":  rce_val,
-
-        # ── Margins ───────────────────────────────────────────────────────────
-        "Gross Margin %":   margin_dict["Gross Margin %"],
-        "SG&A Margin %":    sga_margin_val,
-        "R&D Margin %":     rd_margin_val,
-        "EBITDA Margin %":  ebitda_margin_val,
-        "EBIT Margin %":    margin_dict["EBIT Margin %"],
-        "Net Margin %":     margin_dict["Net Margin %"],
-        "LFCF Margin %":    lfcf_margin_val,
-        "UFCF Margin %":    ufcf_margin_val,
-        "CapEx % Revenue":  capex_pct_revenue,
-
-        # ── Turnover ──────────────────────────────────────────────────────────
-        "Total Asset Turnover": asset_turnover,
-        "AR Turnover":          ar_turnover,
-        "Inventory Turnover":   inv_turnover,
-
-        # ── Short-term liquidity ───────────────────────────────────────────────
-        "Current Ratio":              current_ratio_val,
-        "Quick Ratio":                quick_ratio_val,
-        "Avg Days Sales Outstanding": dso,
-        "Avg Days Inventory Outstanding": dio,
-        "Avg Days Payable Outstanding":   dpo,
-        "Cash Conversion Cycle":          ccc,
-
-        # ── Leverage ──────────────────────────────────────────────────────────
-        "Total D/E":           total_de,
-        "Total D/Capital":     total_d_cap,
-        "LT D/E":              lt_de,
-        "LT D/Capital":        lt_d_cap,
-        "Total Liab/Assets":   liab_to_assets,
-        "EBIT/Interest":       ebit_interest,
-        "EBITDA/Interest":     ebitda_interest,
-        "Total Debt/Interest": total_debt_interest,
-        "Net Debt/Interest":   net_debt_interest,
-        "Altman Z-Score":      z_score,
-
-        # ── YoY growth ────────────────────────────────────────────────────────
-        "Revenue YoY %":          revenue_yoy,
-        "Gross Profit YoY %":     gross_profit_yoy,
-        "EBIT YoY %":             ebit_yoy,
-        "EBITDA YoY %":           ebitda_yoy,
-        "Net Income YoY %":       net_income_yoy,
-        "EPS YoY %":              eps_yoy,
-        "Diluted EPS YoY %":      diluted_eps_yoy,
-        "AR YoY %":               ar_yoy,
-        "Inventory YoY %":        inventory_yoy,
-        "Net PP&E YoY %":         ppe_yoy,
-        "Total Assets YoY %":     total_assets_yoy,
-        "Total Liabilities YoY %": total_liabilities_yoy,
-        "Total Equity YoY %":     equity_yoy,
-
-        # ── 2yr CAGR ──────────────────────────────────────────────────────────
-        "Revenue 2yr CAGR %":           revenue_cagr_2yr,
-        "Gross Profit 2yr CAGR %":      gross_profit_cagr_2yr,
-        "EBIT 2yr CAGR %":              ebit_cagr_2yr,
-        "EBITDA 2yr CAGR %":            ebitda_cagr_2yr,
-        "Net Income 2yr CAGR %":        net_income_cagr_2yr,
-        "EPS 2yr CAGR %":               eps_cagr_2yr,
-        "Diluted EPS 2yr CAGR %":       diluted_eps_cagr_2yr,
-        "AR 2yr CAGR %":                ar_cagr_2yr,
-        "Inventory 2yr CAGR %":         inventory_cagr_2yr,
-        "Net PP&E 2yr CAGR %":          ppe_cagr_2yr,
-        "Total Assets 2yr CAGR %":      total_assets_cagr_2yr,
-        "Total Liabilities 2yr CAGR %": total_liabilities_cagr_2yr,
-        "Total Equity 2yr CAGR %":      equity_cagr_2yr,
-
-        # ── 3yr CAGR ──────────────────────────────────────────────────────────
-        "Revenue 3yr CAGR %":           revenue_cagr_3yr,
-        "Gross Profit 3yr CAGR %":      gross_profit_cagr_3yr,
-        "EBIT 3yr CAGR %":              ebit_cagr_3yr,
-        "EBITDA 3yr CAGR %":            ebitda_cagr_3yr,
-        "Net Income 3yr CAGR %":        net_income_cagr_3yr,
-        "EPS 3yr CAGR %":               eps_cagr_3yr,
-        "Diluted EPS 3yr CAGR %":       diluted_eps_cagr_3yr,
-        "AR 3yr CAGR %":                ar_cagr_3yr,
-        "Inventory 3yr CAGR %":         inventory_cagr_3yr,
-        "Net PP&E 3yr CAGR %":          ppe_cagr_3yr,
-        "Total Assets 3yr CAGR %":      total_assets_cagr_3yr,
-        "Total Liabilities 3yr CAGR %": total_liabilities_cagr_3yr,
-        "Total Equity 3yr CAGR %":      equity_cagr_3yr,
-        "LFCF 3yr CAGR %":              lfcf_cagr_3yr,
-
-        # ── 5yr CAGR ──────────────────────────────────────────────────────────
-        "Revenue 5yr CAGR %":           revenue_cagr_5yr,
-        "Gross Profit 5yr CAGR %":      gross_profit_cagr_5yr,
-        "EBIT 5yr CAGR %":              ebit_cagr_5yr,
-        "EBITDA 5yr CAGR %":            ebitda_cagr_5yr,
-        "Net Income 5yr CAGR %":        net_income_cagr_5yr,
-        "EPS 5yr CAGR %":               eps_cagr_5yr,
-        "Diluted EPS 5yr CAGR %":       diluted_eps_cagr_5yr,
-        "AR 5yr CAGR %":                ar_cagr_5yr,
-        "Inventory 5yr CAGR %":         inventory_cagr_5yr,
-        "Net PP&E 5yr CAGR %":          ppe_cagr_5yr,
-        "Total Assets 5yr CAGR %":      total_assets_cagr_5yr,
-        "Total Liabilities 5yr CAGR %": total_liabilities_cagr_5yr,
-        "Total Equity 5yr CAGR %":      equity_cagr_5yr,
-
-        # ── Valuation ─────────────────────────────────────────────────────────
-        "PEG (PE LTM)": peg_ltm,
-        "PEG (Lynch)":  peg_lynch_ratio,
-        "FCF Yield %":  fcf_yield_pct,
-    }
+    # Optional deterministic expansion via Capital IQ-style SIC index.
+    try:
+        from sec_engine.capital_iq_style_peer_finder import get_peers_by_sic_deterministic
+        deterministic_pool = get_peers_by_sic_deterministic(str(target_sic), max_results=200)
+        deterministic_pool = [t for t in deterministic_pool if t != ticker]
+        if deterministic_pool:
+            same_industry = list(dict.fromkeys(same_industry + deterministic_pool))
+    except Exception:
+        pass
+    
+    # Filter df to same industry and calculate market cap similarity
+    industry_df = df[df['Ticker'].isin(same_industry)].copy()
+    
+    # Parse market cap for sorting — use robust helper so bad values become NaN
+    # and are then excluded from the distance calculation rather than crashing.
+    industry_df['market_cap_numeric'] = industry_df['Market Cap (M)'].apply(_parse_market_cap)
+    industry_df = industry_df[pd.notna(industry_df['market_cap_numeric'])]
+    
+    # Calculate distance from target market cap
+    industry_df['cap_distance'] = abs(
+        industry_df['market_cap_numeric'] - target_cap
+    )
+    
+    # Sort by market cap similarity and return top peers
+    peers = industry_df.nsmallest(max_peers, 'cap_distance')['Ticker'].tolist()
+    
+    return peers
