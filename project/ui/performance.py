@@ -25,6 +25,9 @@ import yfinance as yf
 from scipy import stats
 from scipy.optimize import brentq
 
+# Imported lazily inside the Portfolio tab to avoid circular imports at module load.
+# (portfolio_monte_carlo may import from performance in future; lazy import is safer.)
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 UP      = "#00C805"
@@ -1184,7 +1187,7 @@ def render_performance() -> None:
         unsafe_allow_html=True)
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
-    tabs = st.tabs(["Summary","Risk & Drops","What Do I Own?","Where Did My Money Go?"])
+    tabs = st.tabs(["Summary","Risk & Drops","What Do I Own?","Where Did My Money Go?","Portfolio"])
 
     # ════════════ TAB 0 — SUMMARY ════════════════════════════════════════════
     with tabs[0]:
@@ -1395,6 +1398,11 @@ def render_performance() -> None:
             st.dataframe(filtered[["Date","Stock","Type","Shares","Price Each","Total Value"]],width="stretch",hide_index=True)
             st.download_button(label="⬇ Download as CSV",data=transactions.to_csv(index=False),
                                file_name=f"my_portfolio_{datetime.now().strftime('%Y-%m-%d')}.csv",mime="text/csv")
+
+    # ════════════ TAB 4 — PORTFOLIO ══════════════════════════════════════════
+    with tabs[4]:
+        from ui.portfolio_monte_carlo import render_portfolio_monte_carlo
+        render_portfolio_monte_carlo()
 
     # ── Debug ─────────────────────────────────────────────────────────────────
     if debug_mode:
