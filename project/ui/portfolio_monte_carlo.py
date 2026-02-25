@@ -474,9 +474,25 @@ def render_portfolio_monte_carlo(holdings: dict = None):
     if holdings:
         held_tickers = sorted(holdings.keys())
         held_key     = ",".join(held_tickers)
-        if held_key != st.session_state.get("_portfolio_holdings_key", ""):
-            st.session_state["portfolio_stocks_input"]  = "\n".join(held_tickers)
+        prev_key     = st.session_state.get("_portfolio_holdings_key", "")
+        canonical    = "\n".join(held_tickers)
+        current_text = st.session_state.get("portfolio_stocks_input", "")
+
+        def _norm(text):
+            return ",".join(sorted(t.strip().upper() for t in text.splitlines() if t.strip()))
+
+        # Only preserve a manual edit when: holdings haven't changed AND the
+        # textarea has been deliberately altered away from the canonical list.
+        user_edited = (
+            prev_key != ""
+            and held_key == prev_key
+            and _norm(current_text) != _norm(canonical)
+        )
+
+        if not user_edited:
+            st.session_state["portfolio_stocks_input"]  = canonical
             st.session_state["_portfolio_holdings_key"] = held_key
+
         auto_sourced = True
     else:
         auto_sourced = False
