@@ -27,6 +27,14 @@
 #     substituting 0 via nan_to_zero and producing a misleading figure.
 #   - net_debt is now guarded: if debt is NaN the result is NaN, not
 #     0 - cash = -cash, which looked like genuine negative net debt.
+#
+# Per-ticker tax rate (current version):
+#   - build_company_summary() now accepts an optional tax_rate parameter.
+#     When provided, it overrides both the TICKER_TAX_RATE_OVERRIDES registry
+#     and the 21% statutory default for NOPAT and UFCF computation.
+#     Resolution order: explicit arg > registry override > 21% default.
+#   - The resolved rate is surfaced as "Effective Tax Rate" in the returned
+#     summary dict so callers can always audit which rate was used.
 # ------------------------------------------------------------------
 
 from sec_engine.metrics import (
@@ -67,7 +75,7 @@ from sec_engine.metrics import (
     peg_pe_ltm,
     peg_lynch,
 )
-from sec_engine.constants import NOPAT_TAX_RATE
+from sec_engine.constants import NOPAT_TAX_RATE, get_effective_tax_rate
 import numpy as np
 import pandas as pd
 
@@ -124,7 +132,16 @@ def build_company_summary(
     equity_history: pd.Series | None = None,
     # Source flags for sign normalization
     capex_from_yfinance: bool = True,
+    # Per-ticker effective tax rate override.
+    # Pass a float (e.g. 0.12) to use a company-specific rate for NOPAT
+    # and UFCF. Pass None to use get_effective_tax_rate(ticker), which
+    # checks the TICKER_TAX_RATE_OVERRIDES registry in constants.py
+    # before falling back to the 21% statutory default.
+    tax_rate: float | None = None,
 ) -> dict:
+
+    # Resolve tax rate: explicit arg > registry override > statutory default
+    effective_tax_rate = tax_rate if tax_rate is not None else get_effective_tax_rate(ticker)
 
     # ── Income statement (LTM) ────────────────────────────────────────────────
     revenue          = nz(ltm_data.get("revenue"))
@@ -217,7 +234,7 @@ def build_company_summary(
     dividend_yield_pct = nz(metadata.get("dividend_yield_pct"))
 
     # ── ROIC ──────────────────────────────────────────────────────────────────
-    nopat = ebit * (1 - NOPAT_TAX_RATE) if not np.isnan(ebit) else np.nan
+    nopat = ebit * (1 - effective_tax_rate) if not np.isnan(ebit) else np.nan
     invested_capital = nan_to_zero(debt) + nan_to_zero(equity) - nan_to_zero(cash)
 
     # ── Margins ───────────────────────────────────────────────────────────────
@@ -240,7 +257,7 @@ def build_company_summary(
         and not np.isnan(interest_expense)
         and interest_expense != 0
     ):
-        ufcf_value = lfcf_value + abs(interest_expense) * (1 - NOPAT_TAX_RATE)
+        ufcf_value = lfcf_value + abs(interest_expense) * (1 - effective_tax_rate)
     else:
         ufcf_value = np.nan  # Cannot compute without interest expense
 
@@ -381,6 +398,7 @@ def build_company_summary(
         "Industry":       metadata.get("industry"),
         "Market Cap (M)": market_cap_m,
         "Data As Of":     data_as_of,
+        "Effective Tax Rate": effective_tax_rate,  # resolved rate used for NOPAT and UFCF
 
         # ── Profitability ──────────────────────────────────────────────────────
         "ROA %":  roa_val,
