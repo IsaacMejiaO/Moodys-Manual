@@ -811,7 +811,7 @@ def render_portfolio_monte_carlo(holdings: dict = None):
             st.markdown(_verdict_card(
                 "Quality of Return (Sharpe)", f"{s_label} ({sharpe:.2f})", s_color,
                 f"For every unit of total risk, this portfolio earns a Sharpe of {sharpe:.2f}. "
-                f"Above 1.0 is generally considered good; above 2.0 is excellent."
+                f"Above 1.0 is generally considered good."
             ), unsafe_allow_html=True)
         with cb:
             st.markdown(_verdict_card(
