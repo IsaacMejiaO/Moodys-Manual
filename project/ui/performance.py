@@ -1225,7 +1225,7 @@ def render_performance() -> None:
         with ca:
             if not np.isnan(alpha):
                 st.markdown(_verdict_card("Am I beating the market? (Alpha)", a_label, a_color,
-                    f"I'm earning {alpha*100:+.2f}% per year above what the market alone would have given me. Positive alpha = my stock picks are adding value."), unsafe_allow_html=True)
+                    f"I'm earning {alpha*100:+.2f}% per year above what the market alone would have given me."), unsafe_allow_html=True)
             if not np.isnan(excess):
                 st.markdown(_verdict_card("Extra return vs S&P 500",
                     f"{'+' if excess>0 else '-'} {excess*100:+.2f}% per year", UP if excess>0 else DOWN,
@@ -1412,4 +1412,5 @@ def render_performance() -> None:
 
 if __name__ == "__main__":
     render_performance()
+
 
