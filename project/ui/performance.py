@@ -1402,7 +1402,7 @@ def render_performance() -> None:
         col_stmt, col_tx = st.columns(2)
 
         with col_stmt:
-            _section_header("Portfolio Statement","A complete accounting of every dollar — what went in, what came out, what's left")
+
             steps = [
                 ("I started with",       f"${recon['beg_nav']:,.2f}",      "#ffffff"),
                 ("+ Money I added",      f"+ ${recon['contributions']:,.2f}", UP),
@@ -1420,7 +1420,7 @@ def render_performance() -> None:
                 st.warning(f"⚠️ Small discrepancy of ${check:.2f} — check that all deposits and withdrawals are in the CSV.")
 
         with col_tx:
-            _section_header("All Transactions")
+
             filtered = transactions.copy()
             filtered = filtered.sort_values("date", ascending=False)
             filtered["date"]   = filtered["date"].dt.strftime("%b %d, %Y")
