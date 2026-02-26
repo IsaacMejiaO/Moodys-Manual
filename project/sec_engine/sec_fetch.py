@@ -76,11 +76,15 @@ def _get_with_retry(url: str) -> dict:
     Does NOT retry on:
       - 404 Not Found (company not in EDGAR — caller should handle)
       - 400 Bad Request
+
+    Design note: the semaphore is acquired per *request attempt*, not for the
+    entire retry loop including sleep.  This ensures that other threads are not
+    blocked for up to 10+ seconds waiting for backoff sleeps to complete.
     """
     last_exc = None
 
-    with _SEC_SEMAPHORE:
-        for attempt in range(_MAX_RETRIES):
+    for attempt in range(_MAX_RETRIES):
+        with _SEC_SEMAPHORE:
             try:
                 resp = requests.get(url, headers=SEC_HEADERS, timeout=_TIMEOUT)
 
@@ -91,30 +95,32 @@ def _get_with_retry(url: str) -> dict:
                     raise SECFetchError(url, 404, "Not found in EDGAR")
 
                 if resp.status_code in (429, 503):
-                    # Rate limited or server busy — back off before retrying
+                    # Rate limited or server busy — back off before retrying.
+                    # We fall through to the sleep below (outside the semaphore).
                     wait = _RETRY_BACKOFF_BASE * (2 ** attempt)
                     if resp.status_code == 429:
-                        # Respect Retry-After header if present
                         retry_after = resp.headers.get("Retry-After")
                         if retry_after:
                             try:
                                 wait = max(wait, float(retry_after))
                             except ValueError:
                                 pass
-                    time.sleep(wait)
                     last_exc = SECFetchError(url, resp.status_code, resp.reason)
-                    continue
-
-                # Other 4xx/5xx — not retriable
-                raise SECFetchError(url, resp.status_code, resp.reason)
+                    # release semaphore BEFORE sleeping
+                else:
+                    # Other 4xx/5xx — not retriable
+                    raise SECFetchError(url, resp.status_code, resp.reason)
 
             except SECFetchError:
                 raise
             except (requests.ConnectionError, requests.Timeout) as exc:
                 wait = _RETRY_BACKOFF_BASE * (2 ** attempt)
-                time.sleep(wait)
                 last_exc = exc
-                continue
+                # release semaphore BEFORE sleeping (falls through to sleep below)
+
+        # Sleep outside the semaphore so other threads can make requests
+        # while we wait.
+        time.sleep(wait)
 
     raise SECFetchError(url, None, f"Failed after {_MAX_RETRIES} retries: {last_exc}")
 
