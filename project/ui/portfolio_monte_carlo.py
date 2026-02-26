@@ -890,12 +890,14 @@ def render_portfolio_monte_carlo(holdings: dict = None):
             st.plotly_chart(
                 plot_allocation_donut(weights_nonzero, color_map=shared_color_map),
                 width="stretch",
+                key="alloc_donut",
             )
 
         with col_risk:
             st.plotly_chart(
                 plot_risk_contribution(weights, cov, color_map=shared_color_map),
                 width="stretch",
+                key="alloc_risk_contrib",
             )
 
         # Compute top risk contributor for the verdict card
@@ -956,6 +958,7 @@ def render_portfolio_monte_carlo(holdings: dict = None):
         st.plotly_chart(
             plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol_val, port_return, eq_grid),
             width="stretch",
+            key="frontier_chart",
         )
 
         col_cdar, col_cvar = st.columns(2)
@@ -982,7 +985,7 @@ def render_portfolio_monte_carlo(holdings: dict = None):
             fig_cum = plot_cumulative_returns(port_series, spy_returns)
         except Exception:
             fig_cum = plot_cumulative_returns(port_series)
-        st.plotly_chart(fig_cum, width="stretch")
+        st.plotly_chart(fig_cum, width="stretch", key="perf_cumulative")
 
         if spy_returns is not None:
             excess    = port_series.mean() * 252 - spy_returns.mean() * 252
@@ -1039,4 +1042,5 @@ def render_portfolio_monte_carlo(holdings: dict = None):
         st.plotly_chart(
             plot_risk_contribution(weights, cov, color_map=shared_color_map),
             width="stretch",
+            key="tab3_risk_contrib",
         )
