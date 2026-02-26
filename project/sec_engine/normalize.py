@@ -169,11 +169,25 @@ GAAP_MAP = {
     # Total debt = short-term borrowings + current portion of LT debt + LT debt.
     # The tags below represent *total* debt as reported on the balance sheet.
     # Prior version incorrectly used only long-term debt tags here.
+    # NOTE: Many companies do not file a single combined-debt tag; when none of
+    # the combined tags is present the fallback is LongTermDebt, which omits
+    # short-term borrowings.  aggregation.py supplements this with a separate
+    # ShortTermBorrowings fetch (via "short_term_debt" key below) when the
+    # combined tag is missing, so ROIC/leverage ratios remain accurate.
     "debt": [
         "DebtLongtermAndShorttermCombinedAmount",
         "LongTermDebtAndCapitalLeaseObligations",      # includes current portion
         "LongTermDebtAndFinanceLeaseObligations",
         "LongTermDebt",                                # fallback if combined not filed
+    ],
+
+    # Short-term debt/borrowings — used to supplement the "debt" tag when only
+    # LongTermDebt is available so that total debt is not understated.
+    "short_term_debt": [
+        "ShortTermBorrowings",
+        "NotesPayableCurrent",
+        "ShortTermNotesPayable",
+        "DebtCurrent",
     ],
 
     "long_term_debt": [
@@ -200,4 +214,10 @@ GAAP_MAP = {
 # Using a reference here (not a copy) means updating "operating_income" tags
 # automatically keeps "ebit" in sync, and callers fetching both keys in a
 # loop will not issue duplicate EDGAR API calls for the same data.
+#
+# WARNING — do NOT mutate this list (e.g. GAAP_MAP["ebit"].append(...)).
+# Because this is a reference, any mutation would silently modify
+# GAAP_MAP["operating_income"] as well.  To add a tag to one key only,
+# replace the reference with an explicit copy:
+#   GAAP_MAP["ebit"] = list(GAAP_MAP["operating_income"]) + ["NewTag"]
 GAAP_MAP["ebit"] = GAAP_MAP["operating_income"]
