@@ -880,7 +880,7 @@ def render_portfolio_monte_carlo(holdings: dict = None):
     shared_color_map = ranked_blue_map(weights_nonzero * 100)
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Risk Contribution"])
+    tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Risk Contribution", "Volatility"])
 
     # ════════ TAB 0 — ALLOCATION ═════════════════════════════════════════════
     with tabs[0]:
@@ -1043,4 +1043,12 @@ def render_portfolio_monte_carlo(holdings: dict = None):
             plot_risk_contribution(weights, cov, color_map=shared_color_map),
             width="stretch",
             key="tab3_risk_contrib",
+        )
+
+    # ════════ TAB 4 — VOLATILITY ══════════════════════════════════════════════
+    with tabs[4]:
+        st.plotly_chart(
+            plot_rolling_volatility(port_series),
+            width="stretch",
+            key="tab4_rolling_vol",
         )
