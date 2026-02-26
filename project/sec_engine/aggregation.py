@@ -80,6 +80,7 @@ def build_company_summary(
     ebitda_history: Optional[pd.Series] = None,
     net_income_history: Optional[pd.Series] = None,
     eps_history: Optional[pd.Series] = None,
+    eps_history: Optional[pd.Series] = None,
     diluted_eps_history: Optional[pd.Series] = None,
     ar_history: Optional[pd.Series] = None,
     inventory_history: Optional[pd.Series] = None,
@@ -174,8 +175,10 @@ def build_company_summary(
     # Invested capital = equity + total debt - cash
     if not pd.isna(equity) and not pd.isna(total_debt) and not pd.isna(cash):
         invested_capital = float(equity) + float(total_debt) - float(cash)
-    elif not pd.isna(equity) and not pd.isna(long_term_debt):
-        invested_capital = float(equity) + float(long_term_debt)
+    elif not pd.isna(equity) and not pd.isna(total_debt):
+        # Cash not available — omit rather than substitute long_term_debt,
+        # which would understate IC by ignoring short-term borrowings.
+        invested_capital = float(equity) + float(total_debt)
     else:
         invested_capital = np.nan
 
@@ -210,9 +213,14 @@ def build_company_summary(
     # ── Free cash flow ───────────────────────────────────────────────────────
     lfcf_val = fcf(ocf, capex)  # levered FCF = OCF - CapEx
 
-    # Unlevered FCF = LFCF + interest_expense * (1 - tax_rate)
+    # Unlevered FCF = LFCF + interest_expense × (1 − tax_rate)
+    # interest_expense must be a *positive* expense value here.
+    # The SEC path already stores it positive (normalize.py tags report the
+    # absolute expense).  The yfinance path abs()'s it at ingestion in app.py.
+    # We abs() once more as a belt-and-suspenders guard so sign differences in
+    # either upstream path never silently subtract interest instead of adding it.
     if not pd.isna(lfcf_val) and not pd.isna(interest_expense):
-        ufcf_val = lfcf_val + float(interest_expense) * (1 - tax_rate)
+        ufcf_val = lfcf_val + abs(float(interest_expense)) * (1 - tax_rate)
     else:
         ufcf_val = lfcf_val
 
@@ -312,7 +320,7 @@ def build_company_summary(
     ebit_2y  = _cagr_pct(ebit_history, 2)
     ebd_2y   = _cagr_pct(ebitda_history, 2)
     ni_2y    = _cagr_pct(net_income_history, 2)
-    eps_2y   = _cagr_pct(diluted_eps_history, 2)
+    eps_2y   = _cagr_pct(eps_history, 2)
     dil_2y   = _cagr_pct(diluted_eps_history, 2)
     ar_2y    = _cagr_pct(ar_history, 2)
     inv_2y   = _cagr_pct(inventory_history, 2)
@@ -326,7 +334,7 @@ def build_company_summary(
     ebit_3y  = _cagr_pct(ebit_history, 3)
     ebd_3y   = _cagr_pct(ebitda_history, 3)
     ni_3y    = _cagr_pct(net_income_history, 3)
-    eps_3y   = _cagr_pct(diluted_eps_history, 3)
+    eps_3y   = _cagr_pct(eps_history, 3)
     dil_3y   = _cagr_pct(diluted_eps_history, 3)
     ar_3y    = _cagr_pct(ar_history, 3)
     inv_3y   = _cagr_pct(inventory_history, 3)
@@ -340,7 +348,7 @@ def build_company_summary(
     ebit_5y  = _cagr_pct(ebit_history, 5)
     ebd_5y   = _cagr_pct(ebitda_history, 5)
     ni_5y    = _cagr_pct(net_income_history, 5)
-    eps_5y   = _cagr_pct(diluted_eps_history, 5)
+    eps_5y   = _cagr_pct(eps_history, 5)
     dil_5y   = _cagr_pct(diluted_eps_history, 5)
     ar_5y    = _cagr_pct(ar_history, 5)
     inv_5y   = _cagr_pct(inventory_history, 5)
