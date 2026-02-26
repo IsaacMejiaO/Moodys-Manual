@@ -45,6 +45,14 @@ NOPAT_TAX_RATE: float = 0.21
 #   - Company 10-K, footnote "Income Taxes" (3-year average cash tax rate)
 #   - SEC EDGAR: IncomeTaxesPaid / IncomeBeforeIncomeTaxesDomestic
 #
+# ⚠️  MULTI-USER WARNING: This dict is module-level state, imported once per
+# process.  In a multi-user Streamlit deployment (e.g. multiple Gunicorn
+# workers sharing a process each), overrides set by one user are visible to
+# all users in that process.  This is intentional for a single-analyst
+# workstation but must be considered if deploying for multiple independent
+# users.  For multi-tenant use, move overrides into st.session_state and
+# pass them explicitly to get_effective_tax_rate().
+#
 # Note: This dict is intentionally empty by default. The statutory 21%
 # is the correct starting point when no better information is available.
 # Populating it with wrong numbers is worse than using the default.
