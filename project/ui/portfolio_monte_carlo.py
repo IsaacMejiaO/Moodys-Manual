@@ -879,34 +879,6 @@ def render_portfolio_monte_carlo(holdings: dict = None):
 
     shared_color_map = ranked_blue_map(weights_nonzero * 100)
 
-    # ── KPI metric cards (top row) ────────────────────────────────────────────
-    ret_color = UP if port_return >= 0 else DOWN
-    ret_sign  = "+" if port_return >= 0 else ""
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    with c1:
-        st.markdown(_metric_card("Expected Return", f"{ret_sign}{port_return*100:.1f}%",
-            ret_color, tooltip="Expected annualized return."), unsafe_allow_html=True)
-    with c2:
-        hist_color = UP if annual_ret >= 0 else DOWN
-        st.markdown(_metric_card("Historical Return", f"{'+' if annual_ret>=0 else ''}{annual_ret*100:.1f}%",
-            hist_color, tooltip="Annualized return earned."), unsafe_allow_html=True)
-    with c3:
-        st.markdown(_metric_card("Volatility", f"{port_vol_val*100:.1f}%",
-            ORANGE if port_vol_val < 0.25 else DOWN, tooltip="Annualized portfolio standard deviation."), unsafe_allow_html=True)
-    with c4:
-        sh_color = UP if sharpe >= 1 else (ORANGE if sharpe >= 0.5 else DOWN)
-        st.markdown(_metric_card("Sharpe Ratio", f"{sharpe:.2f}",
-            sh_color, tooltip="Return per unit of risk above a 2% RFR."), unsafe_allow_html=True)
-    with c5:
-        st.markdown(_metric_card("CDaR (5%)", f"{port_cdar*100:.1f}%",
-            DOWN if port_cdar > 0.15 else ORANGE, tooltip="Average of the 5% worst drawdowns."), unsafe_allow_html=True)
-    with c6:
-        st.markdown(_metric_card("CVaR (5%)", f"{port_cvar*100:.1f}%",
-            DOWN if port_cvar > 0.03 else ORANGE, tooltip="Daily loss in the worst 5% of days."), unsafe_allow_html=True)
-
-    # ── Spacing between KPI cards and tabs ────────────────────────────────────
-    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-
     # ── Tabs ─────────────────────────────────────────────────────────────────
     tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Volatility"])
 
@@ -915,21 +887,25 @@ def render_portfolio_monte_carlo(holdings: dict = None):
         col_donut, col_risk = st.columns([1, 1], gap="medium")
 
         with col_donut:
-            _section_header("Holdings Mix")
             st.plotly_chart(
                 plot_allocation_donut(weights_nonzero, color_map=shared_color_map),
                 width="stretch",
             )
 
         with col_risk:
-            _section_header("Contribution to Portfolio Risk")
             st.plotly_chart(
                 plot_risk_contribution(weights, cov, color_map=shared_color_map),
                 width="stretch",
             )
 
+        # Compute top risk contributor for the verdict card
+        port_variance    = weights @ cov @ weights
+        marginal_contrib = cov @ weights
+        risk_contrib     = weights * marginal_contrib / port_variance
+        top_ticker       = risk_contrib.idxmax()
+        top_pct          = float(risk_contrib[top_ticker] / risk_contrib.sum() * 100)
+
         s_label, s_color = _sharpe_verdict(sharpe)
-        v_label, v_color = _vol_verdict(port_vol_val)
         ca, cb = st.columns(2)
         with ca:
             st.markdown(_verdict_card(
@@ -938,15 +914,45 @@ def render_portfolio_monte_carlo(holdings: dict = None):
                 f"Above 1.0 is generally considered good."
             ), unsafe_allow_html=True)
         with cb:
+            rc_color = DOWN if top_pct > 40 else (ORANGE if top_pct > 25 else UP)
             st.markdown(_verdict_card(
-                "Volatility Profile", f"{v_label} ({port_vol_val*100:.1f}%/yr)", v_color,
-                f"The portfolio swings {port_vol_val*100:.1f}% per year. "
-                f"{'Lower volatility makes it easier to stay the course in down markets.' if port_vol_val < 0.20 else 'Higher volatility means larger swings in both directions.'}"
+                "Concentration of Portfolio Risk",
+                f"{top_ticker} drives {top_pct:.0f}% of risk",
+                rc_color,
+                f"{top_ticker} is the single largest source of portfolio volatility, accounting for "
+                f"{top_pct:.1f}% of total risk. "
+                f"{'Consider trimming or hedging to reduce concentration.' if top_pct > 40 else 'Risk is reasonably spread across holdings.' if top_pct < 25 else 'Moderate concentration — worth monitoring.'}"
             ), unsafe_allow_html=True)
 
     # ════════ TAB 1 — FRONTIER & RISK ════════════════════════════════════════
     with tabs[1]:
-        _section_header("Efficient Frontier")
+        # ── KPI metric cards ─────────────────────────────────────────────────
+        ret_color = UP if port_return >= 0 else DOWN
+        ret_sign  = "+" if port_return >= 0 else ""
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        with c1:
+            st.markdown(_metric_card("Expected Return", f"{ret_sign}{port_return*100:.1f}%",
+                ret_color, tooltip="Expected annualized return."), unsafe_allow_html=True)
+        with c2:
+            hist_color = UP if annual_ret >= 0 else DOWN
+            st.markdown(_metric_card("Historical Return", f"{'+' if annual_ret>=0 else ''}{annual_ret*100:.1f}%",
+                hist_color, tooltip="Annualized return earned."), unsafe_allow_html=True)
+        with c3:
+            st.markdown(_metric_card("Volatility", f"{port_vol_val*100:.1f}%",
+                ORANGE if port_vol_val < 0.25 else DOWN, tooltip="Annualized portfolio standard deviation."), unsafe_allow_html=True)
+        with c4:
+            sh_color = UP if sharpe >= 1 else (ORANGE if sharpe >= 0.5 else DOWN)
+            st.markdown(_metric_card("Sharpe Ratio", f"{sharpe:.2f}",
+                sh_color, tooltip="Return per unit of risk above a 2% RFR."), unsafe_allow_html=True)
+        with c5:
+            st.markdown(_metric_card("CDaR (5%)", f"{port_cdar*100:.1f}%",
+                DOWN if port_cdar > 0.15 else ORANGE, tooltip="Average of the 5% worst drawdowns."), unsafe_allow_html=True)
+        with c6:
+            st.markdown(_metric_card("CVaR (5%)", f"{port_cvar*100:.1f}%",
+                DOWN if port_cvar > 0.03 else ORANGE, tooltip="Daily loss in the worst 5% of days."), unsafe_allow_html=True)
+
+        st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+
         st.plotly_chart(
             plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol_val, port_return, eq_grid),
             width="stretch",
@@ -972,7 +978,6 @@ def render_portfolio_monte_carlo(holdings: dict = None):
 
     # ════════ TAB 2 — PERFORMANCE ════════════════════════════════════════════
     with tabs[2]:
-        _section_header("Cumulative Return vs S&P 500")
         try:
             fig_cum = plot_cumulative_returns(port_series, spy_returns)
         except Exception:
@@ -991,5 +996,4 @@ def render_portfolio_monte_carlo(holdings: dict = None):
 
     # ════════ TAB 3 — VOLATILITY ═════════════════════════════════════════════
     with tabs[3]:
-        _section_header("Rolling 1-Year Volatility")
         st.plotly_chart(plot_rolling_volatility(port_series), width="stretch")
