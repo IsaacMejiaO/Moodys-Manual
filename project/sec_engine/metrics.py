@@ -114,8 +114,12 @@ def current_ratio(current_assets, current_liabilities):
 
 def quick_ratio(current_assets, inventory, current_liabilities):
     """(Current Assets - Inventory) / Current Liabilities"""
-    quick_assets = (current_assets or 0) - (inventory or 0)
-    return safe_divide(quick_assets, current_liabilities)
+    # Explicit null checks avoid the fragile `x or 0` pattern, which is truthy-
+    # safe for None but semantically wrong for 0.0 inputs (0 or 0 == 0, fine,
+    # but the intent is clearer with an explicit guard).
+    ca  = float(current_assets) if current_assets is not None and not np.isnan(float(current_assets)) else 0.0
+    inv = float(inventory)      if inventory       is not None and not np.isnan(float(inventory))      else 0.0
+    return safe_divide(ca - inv, current_liabilities)
 
 def days_sales_outstanding(accounts_receivable, revenue):
     """(Accounts Receivable / Revenue) * 365"""
@@ -176,7 +180,7 @@ def net_debt_to_interest(net_debt, interest_expense):
     """Net Debt / Interest Expense"""
     return safe_divide(net_debt, abs(interest_expense))
 
-def altman_z_score(working_capital, total_assets, retained_earnings, ebit, market_value_equity, total_liabilities, revenue):
+def altman_z_score(working_capital, total_assets, retained_earnings, ebit, market_cap_equity, total_liabilities, revenue):
     """
     Altman Z-Score for public companies:
     Z = 1.2*X1 + 1.4*X2 + 3.3*X3 + 0.6*X4 + 1.0*X5
@@ -184,17 +188,21 @@ def altman_z_score(working_capital, total_assets, retained_earnings, ebit, marke
     X1 = Working Capital / Total Assets
     X2 = Retained Earnings / Total Assets
     X3 = EBIT / Total Assets
-    X4 = Market Value of Equity / Total Liabilities  ← market cap, NOT book equity
+    X4 = Market Value of Equity / Total Liabilities  ← market CAP (not book equity)
     X5 = Sales / Total Assets
+
+    IMPORTANT: market_cap_equity must be *market capitalisation*, not book equity.
+    Passing book equity (from the balance sheet) is a common mistake that produces
+    a systematically lower Z-score and misclassifies healthy companies as distressed.
     """
     x1 = safe_divide(working_capital, total_assets, 0)
     x2 = safe_divide(retained_earnings, total_assets, 0)
     x3 = safe_divide(ebit, total_assets, 0)
-    x4 = safe_divide(market_value_equity, total_liabilities, 0)
+    x4 = safe_divide(market_cap_equity, total_liabilities, 0)
     x5 = safe_divide(revenue, total_assets, 0)
-    
+
     z_score = 1.2*x1 + 1.4*x2 + 3.3*x3 + 0.6*x4 + 1.0*x5
-    
+
     if np.isnan(z_score):
         return np.nan
     return z_score
@@ -216,7 +224,12 @@ def cagr(start_value: float, end_value: float, years: int) -> float:
     if start_value < 0 and end_value > 0:
         return np.nan
     if start_value < 0 and end_value < 0:
-        # Both negative: treat as growth in absolute value but flip sign
+        # Both negative (e.g. net income going from -$1 B to -$500 M):
+        # Treat as growth in absolute value with the sign preserved.
+        # This correctly shows improvement (positive CAGR) when losses are
+        # shrinking, which is economically meaningful even though the numbers
+        # are negative.  Callers displaying this to end-users should add a
+        # note like "losses improving" to avoid confusion.
         return (abs(end_value) / abs(start_value)) ** (1 / years) - 1
     return (end_value / start_value) ** (1 / years) - 1
 
