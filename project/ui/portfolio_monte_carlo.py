@@ -164,9 +164,24 @@ def plot_risk_contribution(
     risk_contrib_pct = risk_contrib_pct.sort_values(ascending=False)
     n = len(risk_contrib_pct)
 
-    # Green gradient matching the sector bar charts (bright → darker)
-    greens = [f"rgba(0,{int(200 - 80 * (i / max(n - 1, 1)))},{int(5 + 30 * (i / max(n - 1, 1)))},0.85)"
-              for i in range(n)]
+    # Green gradient with clear perceptual steps matching the donut chart palette
+    _green_stops = [
+        (0,   200,  80),
+        (30,  180,  60),
+        (60,  160,  40),
+        (90,  140,  20),
+        (120, 120,   5),
+        (140, 100,   0),
+    ]
+    def _green_at(i: int, n: int) -> str:
+        t = i / max(n - 1, 1)
+        seg = t * (len(_green_stops) - 1)
+        lo, hi = int(seg), min(int(seg) + 1, len(_green_stops) - 1)
+        frac = seg - lo
+        r0, g0, b0 = _green_stops[lo]
+        r1, g1, b1 = _green_stops[hi]
+        return f"rgba({int(r0+(r1-r0)*frac)},{int(g0+(g1-g0)*frac)},{int(b0+(b1-b0)*frac)},0.90)"
+    greens = [_green_at(i, n) for i in range(n)]
 
     fig = go.Figure(go.Bar(
         x=risk_contrib_pct.index,
@@ -206,8 +221,8 @@ def plot_rolling_volatility(returns: pd.Series, window: int = 252) -> go.Figure:
     vol_pct     = rolling_vol.dropna() * 100
     final_vol   = float(vol_pct.iloc[-1]) if not vol_pct.empty else 0.0
 
-    # Use ORANGE for volatility (same colour used for vol metrics elsewhere)
-    line_color = ORANGE
+    # Use the same red as the Risk & Drops drawdown chart (DOWN = #FF3B30)
+    line_color = DOWN
     r_hex = line_color.lstrip("#")
     rc, gc, bc = int(r_hex[0:2], 16), int(r_hex[2:4], 16), int(r_hex[4:6], 16)
 
@@ -341,10 +356,30 @@ def plot_allocation_donut(weights: pd.Series, color_map: dict = None) -> go.Figu
 
     labels = weights_sorted.index.tolist()
     values = (weights_sorted * 100).tolist()
-    colors = [
-        f"rgba(0,{int(200 - 80 * (i / max(n - 1, 1)))},{int(5 + 30 * (i / max(n - 1, 1)))},0.85)"
-        for i in range(n)
+    # Use a richer, more perceptually distinct green palette:
+    # brightest/most-saturated green for largest slice, stepping through
+    # clearly different hues (teal-green → mid-green → olive-green) so each
+    # slice is easy to tell apart at a glance.
+    _green_stops = [
+        (0,   200,  80),   # vivid green
+        (30,  180,  60),   # slightly darker
+        (60,  160,  40),   # mid green
+        (90,  140,  20),   # deeper green
+        (120, 120,   5),   # olive-green
+        (140, 100,   0),   # dark olive
     ]
+    def _green_at(i: int, n: int) -> str:
+        t = i / max(n - 1, 1)
+        seg = t * (len(_green_stops) - 1)
+        lo, hi = int(seg), min(int(seg) + 1, len(_green_stops) - 1)
+        frac = seg - lo
+        r0, g0, b0 = _green_stops[lo]
+        r1, g1, b1 = _green_stops[hi]
+        r = int(r0 + (r1 - r0) * frac)
+        g = int(g0 + (g1 - g0) * frac)
+        b = int(b0 + (b1 - b0) * frac)
+        return f"rgba({r},{g},{b},0.90)"
+    colors = [_green_at(i, n) for i in range(n)]
 
     fig = go.Figure(data=[go.Pie(
         labels=labels,
@@ -888,6 +923,9 @@ def render_portfolio_monte_carlo(holdings: dict = None):
     with c6:
         st.markdown(_metric_card("CVaR (5%)", f"{port_cvar*100:.1f}%",
             DOWN if port_cvar > 0.03 else ORANGE, tooltip="Daily loss in the worst 5% of days."), unsafe_allow_html=True)
+
+    # ── Spacing between KPI cards and tabs ────────────────────────────────────
+    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
     tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Volatility"])
