@@ -156,10 +156,25 @@ def find_peers_by_sic(
     # ── Analyst override check ────────────────────────────────────────────────
     override = get_peer_override(ticker_upper)
     if override is not None:
-        all_known = set(df['Ticker'].str.upper()) if not df.empty else set()
-        filtered = [p for p in override if not all_known or p in all_known]
-        result = filtered if filtered else override
-        return result[:max_peers]
+        if not df.empty:
+            all_known = set(df['Ticker'].str.upper())
+            filtered = [p for p in override if p in all_known]
+            if not filtered:
+                # All override tickers are outside the loaded universe.
+                # Log a warning and fall through to heuristic discovery so
+                # callers don't receive tickers that will cause KeyErrors.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Peer override for %s contains no tickers present in the "
+                    "screener universe (%s). Falling through to heuristic peer "
+                    "discovery. Update the override or expand the universe.",
+                    ticker_upper, override,
+                )
+            else:
+                return filtered[:max_peers]
+        else:
+            # No universe loaded yet — return override as-is (best effort).
+            return override[:max_peers]
 
     target_sic = sic_map.get(ticker)
 
