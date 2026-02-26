@@ -52,67 +52,166 @@ def ranked_blue_map(values: pd.Series, darkest: str = "#104861", lightest: str =
 
 
 def plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol, port_return, eq_grid):
-    """Create efficient frontier visualization."""
+    """
+    Efficient frontier — styled to match the app's dark transparent chart language:
+    - Transparent background, white axis text, subtle white gridlines
+    - Simulation cloud coloured by Sharpe ratio (green = high, red = low)
+    - Frontier line in app BLUE with a soft fill underneath
+    - Current portfolio marked with a clean white ring + green fill
+    - Equity-weight callouts as small pill annotations on the curve
+    - Right-edge floating label for the frontier (mirrors performance.py pattern)
+    """
+    mc_risk_arr = np.array(mc_risk)
+    mc_ret_arr  = np.array(mc_ret)
+    curve_risk_arr = np.array(curve_risk)
+    curve_ret_arr  = np.array(curve_ret)
+
+    # ── Sharpe ratio for each simulated portfolio (RFR = 2%) ─────────────────
+    rf = 0.02
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mc_sharpe = np.where(mc_risk_arr > 0, (mc_ret_arr - rf) / mc_risk_arr, 0.0)
+    sharpe_min, sharpe_max = mc_sharpe.min(), mc_sharpe.max()
+    sharpe_range = sharpe_max - sharpe_min if sharpe_max != sharpe_min else 1.0
+
+    # Map each point to a colour: low Sharpe → DOWN red, mid → ORANGE, high → UP green
+    def _sharpe_color(s):
+        t = float(np.clip((s - sharpe_min) / sharpe_range, 0, 1))
+        if t < 0.5:
+            # red → orange
+            t2 = t * 2
+            r = int(0xFF + (0xFF - 0xFF) * t2)
+            g = int(0x3B + (0x9F - 0x3B) * t2)
+            b = int(0x30 + (0x0A - 0x30) * t2)
+        else:
+            # orange → green
+            t2 = (t - 0.5) * 2
+            r = int(0xFF + (0x00 - 0xFF) * t2)
+            g = int(0x9F + (0xC8 - 0x9F) * t2)
+            b = int(0x0A + (0x05 - 0x0A) * t2)
+        return f"rgba({r},{g},{b},0.55)"
+
+    dot_colors = [_sharpe_color(s) for s in mc_sharpe]
+
     fig = go.Figure()
 
-    fig.add_trace(
-        go.Scatter(
-            x=np.array(mc_risk) * 100,
-            y=np.array(mc_ret) * 100,
-            mode="markers",
-            marker=dict(
-                size=2.5,
-                color=np.array(mc_risk) * 100,
-                colorscale="RdYlBu_r",
-                opacity=0.5,
-                showscale=False,
-            ),
-            name="Simulations",
-            hovertemplate="Vol: %{x:.1f}%<br>Return: %{y:.1f}%<extra></extra>",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=np.array(curve_risk) * 100,
-            y=np.array(curve_ret) * 100,
-            mode="lines",
-            line=dict(color="#1f77b4", width=3.4),
-            name="Efficient Frontier",
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=[port_vol * 100],
-            y=[port_return * 100],
-            mode="markers",
-            marker=dict(size=18, color="gold", symbol="star", line=dict(color="black", width=2)),
-            name="Your Portfolio",
-        )
+    # ── 1. Simulation cloud ───────────────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=mc_risk_arr * 100,
+        y=mc_ret_arr * 100,
+        mode="markers",
+        marker=dict(
+            size=3,
+            color=dot_colors,
+            opacity=1,
+        ),
+        name="Simulated portfolios",
+        hovertemplate="<b>Simulated portfolio</b><br>Vol: %{x:.1f}%<br>Return: %{y:.1f}%<extra></extra>",
+    ))
+
+    # ── 2. Frontier fill (soft blue area under the curve) ────────────────────
+    fig.add_trace(go.Scatter(
+        x=curve_risk_arr * 100,
+        y=curve_ret_arr * 100,
+        mode="none",
+        fill="tozeroy",
+        fillcolor="rgba(10,124,255,0.07)",
+        showlegend=False,
+        hoverinfo="skip",
+    ))
+
+    # ── 3. Efficient frontier line ────────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=curve_risk_arr * 100,
+        y=curve_ret_arr * 100,
+        mode="lines",
+        line=dict(color=BLUE, width=3),
+        name="Efficient Frontier",
+        hovertemplate="<b>Efficient Frontier</b><br>Vol: %{x:.1f}%<br>Return: %{y:.1f}%<extra></extra>",
+    ))
+
+    # ── 4. Floating right-edge label for the frontier (performance.py style) ──
+    frontier_final_ret = float(curve_ret_arr[-1] * 100)
+    fig.add_annotation(
+        xref="paper", x=1.01,
+        yref="y",     y=frontier_final_ret,
+        text="Frontier",
+        showarrow=False, xanchor="left", yanchor="middle",
+        font=dict(size=11, color=BLUE, family="'SF Pro Display','Segoe UI',sans-serif"),
+        bgcolor="rgba(0,0,0,0.45)", borderpad=4,
     )
 
-    label_points = np.array([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    # ── 5. Equity-weight callouts along the curve ─────────────────────────────
+    label_points = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
     for lp in label_points:
-        i = np.argmin(np.abs(eq_grid - lp))
+        i = int(np.argmin(np.abs(eq_grid - lp)))
         fig.add_annotation(
-            x=curve_risk[i] * 100,
-            y=curve_ret[i] * 100,
-            text=f"{int(lp * 100)}%",
-            showarrow=False,
-            font=dict(size=9, color="gray"),
-            opacity=0.8,
-            yshift=-12,
+            x=curve_risk_arr[i] * 100,
+            y=curve_ret_arr[i] * 100,
+            text=f"{int(lp * 100)}% eq",
+            showarrow=True,
+            arrowhead=0,
+            arrowwidth=1,
+            arrowcolor="rgba(255,255,255,0.25)",
+            ax=0, ay=-22,
+            font=dict(size=9, color="rgba(255,255,255,0.6)",
+                      family="'SF Pro Display','Segoe UI',sans-serif"),
+            bgcolor="rgba(0,0,0,0)",
+            borderpad=2,
         )
 
+    # ── 6. Current portfolio marker ───────────────────────────────────────────
+    port_ret_pct = port_return * 100
+    port_vol_pct = port_vol * 100
+    # Outer ring
+    fig.add_trace(go.Scatter(
+        x=[port_vol_pct],
+        y=[port_ret_pct],
+        mode="markers",
+        marker=dict(size=22, color="rgba(0,0,0,0)",
+                    line=dict(color="#ffffff", width=2)),
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+    # Inner filled dot
+    fig.add_trace(go.Scatter(
+        x=[port_vol_pct],
+        y=[port_ret_pct],
+        mode="markers+text",
+        marker=dict(size=12, color=UP,
+                    line=dict(color="rgba(0,0,0,0.4)", width=1.5)),
+        text=["Your portfolio"],
+        textposition="top right",
+        textfont=dict(size=11, color="#ffffff",
+                      family="'SF Pro Display','Segoe UI',sans-serif"),
+        name="Your Portfolio",
+        hovertemplate=(
+            "<b>Your Portfolio</b><br>"
+            f"Vol: {port_vol_pct:.1f}%<br>"
+            f"Return: {port_ret_pct:.1f}%<extra></extra>"
+        ),
+    ))
+
+    # ── Layout (mirrors performance.py _CHART_LAYOUT) ─────────────────────────
     fig.update_layout(
-        xaxis=dict(showgrid=True),
-        yaxis=dict(showgrid=True),
-        xaxis_title="Volatility (%)",
-        yaxis_title="Expected Return (%)",
-        height=495,
+        **_CHART_LAYOUT,
+        height=460,
         hovermode="closest",
         showlegend=False,
-        template="plotly_white",
-        margin=dict(l=55, r=95, t=30, b=55),
+        margin=dict(l=55, r=110, t=20, b=55),
+        xaxis=dict(
+            title=dict(text="Volatility (%)", font=dict(color="#ffffff")),
+            showgrid=True, gridcolor="rgba(255,255,255,0.08)",
+            zeroline=False,
+            ticksuffix="%",
+            tickfont=dict(color="#ffffff"),
+        ),
+        yaxis=dict(
+            title=dict(text="Expected Return (%)", font=dict(color="#ffffff")),
+            showgrid=True, gridcolor="rgba(255,255,255,0.08)",
+            zeroline=False,
+            ticksuffix="%",
+            tickfont=dict(color="#ffffff"),
+        ),
     )
     return fig
 
