@@ -103,8 +103,8 @@ def plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol, po
         y=curve_ret_arr * 100,
         mode="lines",
         line=dict(color=BLUE, width=3),
-        name="Efficient Frontier",
-        hovertemplate="<b>Efficient Frontier</b><br>Vol: %{x:.1f}%<br>Return: %{y:.1f}%<extra></extra>",
+        name="",
+        hovertemplate="<b>Frontier</b><br>Vol: %{x:.1f}%<br>Return: %{y:.1f}%<extra></extra>",
     ))
 
     # ── 3. Portfolio marker — white ring + green fill ─────────────────────────
@@ -880,7 +880,7 @@ def render_portfolio_monte_carlo(holdings: dict = None):
     shared_color_map = ranked_blue_map(weights_nonzero * 100)
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Volatility"])
+    tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Risk Contribution"])
 
     # ════════ TAB 0 — ALLOCATION ═════════════════════════════════════════════
     with tabs[0]:
@@ -994,6 +994,49 @@ def render_portfolio_monte_carlo(holdings: dict = None):
                 f"the S&P 500 by {abs(excess)*100:.1f} percentage points per year on a historical basis."
             ), unsafe_allow_html=True)
 
-    # ════════ TAB 3 — VOLATILITY ═════════════════════════════════════════════
+    # ════════ TAB 3 — RISK CONTRIBUTION ══════════════════════════════════════
     with tabs[3]:
-        st.plotly_chart(plot_rolling_volatility(port_series), width="stretch")
+        # Recompute risk contribution breakdown
+        port_variance_t3 = weights @ cov @ weights
+        marginal_contrib_t3 = cov @ weights
+        risk_contrib_t3 = weights * marginal_contrib_t3 / port_variance_t3
+        risk_contrib_pct_t3 = risk_contrib_t3 / risk_contrib_t3.sum() * 100
+
+        top_t3       = risk_contrib_pct_t3.idxmax()
+        top_pct_t3   = float(risk_contrib_pct_t3[top_t3])
+        second_t3    = risk_contrib_pct_t3.drop(top_t3).idxmax() if len(risk_contrib_pct_t3) > 1 else None
+        second_pct_t3 = float(risk_contrib_pct_t3[second_t3]) if second_t3 else 0.0
+        top2_pct_t3  = top_pct_t3 + second_pct_t3
+
+        rc_color_t3 = DOWN if top_pct_t3 > 40 else (ORANGE if top_pct_t3 > 25 else UP)
+        conc_label  = ("Highly concentrated" if top_pct_t3 > 40
+                       else "Moderately concentrated" if top_pct_t3 > 25
+                       else "Well diversified")
+
+        body_parts = [
+            f"{top_t3} is the single largest driver of portfolio volatility, accounting for "
+            f"{top_pct_t3:.1f}% of total risk variance.",
+        ]
+        if second_t3:
+            body_parts.append(
+                f"Together, {top_t3} and {second_t3} account for {top2_pct_t3:.1f}% of risk."
+            )
+        if top_pct_t3 > 40:
+            body_parts.append("Consider trimming or adding an uncorrelated position to reduce concentration.")
+        elif top_pct_t3 > 25:
+            body_parts.append("Risk is moderately concentrated — worth monitoring as the portfolio grows.")
+        else:
+            body_parts.append("Risk is well spread across the portfolio. No single position dominates.")
+
+        st.markdown(_verdict_card(
+            "Contribution to Portfolio Risk",
+            f"{conc_label} — {top_t3} drives {top_pct_t3:.0f}%",
+            rc_color_t3,
+            " ".join(body_parts),
+        ), unsafe_allow_html=True)
+
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        st.plotly_chart(
+            plot_risk_contribution(weights, cov, color_map=shared_color_map),
+            width="stretch",
+        )
