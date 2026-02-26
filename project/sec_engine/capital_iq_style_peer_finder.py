@@ -168,7 +168,26 @@ _SECTOR_SEED_UNIVERSE: Dict[str, List[str]] = {
     ],
 }
 
-CIK_MAP_GLOBAL = load_full_cik_map()
+# ── Lazy CIK map loader ───────────────────────────────────────────────────────
+# IMPORTANT: do NOT call load_full_cik_map() at module level.
+# This file is imported transitively by aggregation.py → peer_finder.py at
+# app startup.  A module-level HTTP call to SEC EDGAR will crash the entire
+# import if the network is unavailable, rate-limited, or slow — causing
+# Streamlit to show "ImportError on line 56 of app.py" before any page loads.
+#
+# Instead we load lazily on first use and cache the result in a module-level
+# variable so subsequent calls are free.
+_CIK_MAP_GLOBAL: Optional[Dict] = None
+
+def _get_cik_map() -> Dict:
+    """Return the SEC ticker→CIK map, loading it once on first call."""
+    global _CIK_MAP_GLOBAL
+    if _CIK_MAP_GLOBAL is None:
+        try:
+            _CIK_MAP_GLOBAL = load_full_cik_map()
+        except Exception:
+            _CIK_MAP_GLOBAL = {}
+    return _CIK_MAP_GLOBAL
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -790,7 +809,7 @@ def get_comprehensive_company_profile(ticker: str) -> dict:
         info = stock.info or {}
         
         # Get CIK for SEC data
-        cik = CIK_MAP_GLOBAL.get(ticker.upper())
+        cik = _get_cik_map().get(ticker.upper())
         
         # Basic Info
         profile = {
@@ -1472,7 +1491,7 @@ def discover_peers_capital_iq_style(
     candidate_tickers.update([t for t in seed_peers if t != ticker.upper()])
 
     # 2c. UPGRADED: Discover via deterministic SIC index
-    cik_map = load_full_cik_map()
+    cik_map = _get_cik_map()
     cik = cik_map.get(ticker)
     if cik and len(candidate_tickers) < 250:
         try:
