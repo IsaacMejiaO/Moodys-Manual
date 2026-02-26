@@ -268,10 +268,9 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
 
             Returns NaN if:
               - Fewer than 4 periods are available.
-              - The 4 quarters span more than ~380 days (non-contiguous data).
-                This mirrors the gap-check in sec_engine/ltm.py and prevents
-                silently summing 15-18 months of data when quarters are missing
-                or when a company changed fiscal year.
+              - Any consecutive pair of quarter end-dates is more than ~120 days
+                apart (catches a missing interior quarter that the old overall-span
+                check would silently accept, e.g. Q1/Q2/Q3/Q5 spanning 15 months).
 
             yfinance returns columns in reverse-chronological order,
             so head(4) gives the 4 most recent periods.
@@ -279,16 +278,13 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
             if df is None or df.empty or field_name not in df.index:
                 return np.nan
             row = df.loc[field_name].dropna()
-            # Columns are period-end dates (Timestamps) in reverse-chron order
             row = row.head(4)
             if len(row) < 4:
                 return np.nan
-            # Gap check: the 4 column dates must span no more than ~380 days.
-            # Older period first (iloc[-1] is earliest since head(4) from reverse order).
             dates = sorted(row.index)
-            span_days = (dates[-1] - dates[0]).days
-            if span_days > 380:
-                return np.nan
+            for i in range(len(dates) - 1):
+                if (dates[i + 1] - dates[i]).days > 120:
+                    return np.nan
             return float(row.sum())
 
         def get_latest_value(df, field_name):
@@ -520,25 +516,30 @@ def fetch_company_data_unified(ticker: str, cik: str = None):
 def get_or_load_ticker_data(ticker: str):
     """
     Get ticker data from cache or load it.
-    This prevents re-fetching data on every page navigation.
+    Prevents re-fetching data on every page navigation.
 
-    Evicts the oldest entry when the cache exceeds MAX_TICKER_CACHE_SIZE,
-    preventing unbounded memory growth in long-running sessions.
+    Evicts the *least-recently-used* entry when the cache exceeds
+    MAX_TICKER_CACHE_SIZE.  Python dicts preserve insertion order (3.7+), so
+    true LRU is achieved by moving an entry to the end on every access and
+    always evicting from the front.  The old implementation only evicted on
+    insert, meaning a ticker accessed 100 times would be evicted before a
+    ticker accessed once — the opposite of LRU.
     """
     cache = st.session_state["ticker_data_cache"]
 
-    # Check if already in session state
     if ticker in cache:
+        # Move to end to mark as most-recently-used
+        cache[ticker] = cache.pop(ticker)
         return cache[ticker]
 
-    # Load and cache
+    # Load fresh data
     cik = CIK_MAP.get(ticker)
     data = fetch_company_data_unified(ticker, cik)
 
-    # Evict oldest entry if at capacity (dict preserves insertion order in Python 3.7+)
+    # Evict least-recently-used (front of dict) if at capacity
     if len(cache) >= MAX_TICKER_CACHE_SIZE:
-        oldest_key = next(iter(cache))
-        del cache[oldest_key]
+        lru_key = next(iter(cache))
+        del cache[lru_key]
 
     cache[ticker] = data
     return data
@@ -547,14 +548,17 @@ def get_or_load_ticker_data(ticker: str):
 def get_or_compute_summary(ticker: str):
     """
     Get summary from cache or compute it.
-    This prevents re-computing metrics on every page navigation.
+    Prevents re-computing metrics on every page navigation.
 
-    Evicts the oldest entry when the cache exceeds MAX_TICKER_CACHE_SIZE.
+    Uses the same LRU eviction as get_or_load_ticker_data: moves the entry to
+    the end of the dict on every access so the least-recently-used entry is
+    always at the front and evicted first when capacity is reached.
     """
     summary_cache = st.session_state["ticker_summary_cache"]
 
-    # Check if already computed
     if ticker in summary_cache:
+        # Move to end to mark as most-recently-used
+        summary_cache[ticker] = summary_cache.pop(ticker)
         return summary_cache[ticker]
 
     # Get data (cached)
