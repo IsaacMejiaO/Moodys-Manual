@@ -727,11 +727,28 @@ def compute_drawdown_series(hist) -> pd.DataFrame:
     df["drawdown"] = (df["twr_cum"]-peak)/peak*100.0
     return df.reset_index(drop=True)
 
-def compute_reconciliation(transactions, hist) -> Dict:
+def compute_reconciliation(transactions, hist, current_value: float = None) -> Dict:
+    """
+    Build the portfolio statement shown in "Where Did My Money Go?".
+
+    Parameters
+    ----------
+    transactions  : Full transactions DataFrame.
+    hist          : Portfolio history DataFrame (used for beg_nav only).
+    current_value : Live portfolio value from _portfolio_returns().
+                    When provided, this is used as end_nav so that the
+                    "= My portfolio today" line matches the "What It's Worth Today"
+                    card in the Summary tab exactly.
+                    When None, falls back to hist["total_value"].iloc[-1], which
+                    uses historical close prices and will diverge from the live value.
+    """
     empty = dict(beg_nav=0.0,contributions=0.0,withdrawals=0.0,net_gain=0.0,end_nav=0.0,check=0.0)
     if transactions.empty or hist is None or hist.empty: return empty
     tx = transactions.copy(); tx["date"] = pd.to_datetime(tx["date"]).dt.tz_localize(None).dt.normalize()
-    beg_nav = float(hist["total_value"].iloc[0]); end_nav = float(hist["total_value"].iloc[-1])
+    beg_nav = float(hist["total_value"].iloc[0])
+    # Use the live current_value when available so end_nav == Summary "What It's Worth Today".
+    # Falling back to hist[-1] would use stale historical close prices.
+    end_nav = float(current_value) if current_value is not None else float(hist["total_value"].iloc[-1])
     contributions = float(tx.loc[tx["action"]=="deposit","total"].sum())
     withdrawals   = float(tx.loc[tx["action"]=="withdrawal","total"].sum())
     net_gain      = end_nav-beg_nav-contributions+withdrawals
@@ -1362,7 +1379,7 @@ def render_performance() -> None:
 
     # ════════════ TAB 3 — WHERE DID MY MONEY GO? ═════════════════════════════
     with tabs[3]:
-        recon = compute_reconciliation(transactions, hist)
+        recon = compute_reconciliation(transactions, hist, current_value=returns["current_value"])
         col_stmt, col_tx = st.columns(2)
 
         with col_stmt:
@@ -1412,5 +1429,3 @@ def render_performance() -> None:
 
 if __name__ == "__main__":
     render_performance()
-
-
