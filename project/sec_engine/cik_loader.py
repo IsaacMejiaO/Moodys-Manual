@@ -10,7 +10,7 @@ def load_full_cik_map() -> dict:
     Loads the full SEC ticker → CIK mapping.
     Returns a dict: { "AAPL": "0000320193", ... }
     """
-    response = requests.get(SEC_TICKER_URL, headers=HEADERS)
+    response = requests.get(SEC_TICKER_URL, headers=HEADERS, timeout=(10, 30))
     response.raise_for_status()
 
     data = response.json()
