@@ -996,9 +996,11 @@ def _chart_rolling(roll_df) -> go.Figure:
 def _chart_sector(sector_df) -> go.Figure:
     if sector_df.empty: return go.Figure()
     n = len(sector_df)
-    blues = [f"rgba(10,{int(124+80*(1-i/max(n-1,1)))},{int(255*(0.7+0.3*(1-i/max(n-1,1))))},0.85)" for i in range(n)]
+    # Gradient from the same green as the Summary performance line (#00C805)
+    # brightest bar first (largest allocation), fading to a darker green
+    greens = [f"rgba(0,{int(200-80*(i/max(n-1,1)))},{int(5+30*(i/max(n-1,1)))},0.85)" for i in range(n)]
     fig = go.Figure(go.Bar(y=sector_df["Sector"],x=sector_df["Percentage"],orientation="h",
-        marker=dict(color=blues,line=dict(color="rgba(0,0,0,0.1)",width=0.5)),
+        marker=dict(color=greens,line=dict(color="rgba(0,0,0,0.1)",width=0.5)),
         text=sector_df["Percentage"].map(lambda v: f"{v:.1f}%"),
         textposition="inside",insidetextanchor="middle",textfont=dict(color="white",size=11),
         hovertemplate="<b>%{y}</b><br>%{x:.1f}%  ·  $%{customdata:,.0f}<extra></extra>",
@@ -1011,9 +1013,9 @@ def _chart_sector_fixed_height(sector_df, height: int) -> go.Figure:
     """Same as _chart_sector but with a fixed height to match an adjacent element."""
     if sector_df.empty: return go.Figure()
     n = len(sector_df)
-    blues = [f"rgba(10,{int(124+80*(1-i/max(n-1,1)))},{int(255*(0.7+0.3*(1-i/max(n-1,1))))},0.85)" for i in range(n)]
+    greens = [f"rgba(0,{int(200-80*(i/max(n-1,1)))},{int(5+30*(i/max(n-1,1)))},0.85)" for i in range(n)]
     fig = go.Figure(go.Bar(y=sector_df["Sector"],x=sector_df["Percentage"],orientation="h",
-        marker=dict(color=blues,line=dict(color="rgba(0,0,0,0.1)",width=0.5)),
+        marker=dict(color=greens,line=dict(color="rgba(0,0,0,0.1)",width=0.5)),
         text=sector_df["Percentage"].map(lambda v: f"{v:.1f}%"),
         textposition="inside",insidetextanchor="middle",textfont=dict(color="white",size=11),
         hovertemplate="<b>%{y}</b><br>%{x:.1f}%  ·  $%{customdata:,.0f}<extra></extra>",
@@ -1192,12 +1194,18 @@ def render_performance() -> None:
 
     # ── Narrative ─────────────────────────────────────────────────────────────
     narrative = _generate_narrative(returns, risk, start_date, transactions)
+    te_glance = risk.get("tracking_error", np.nan)
+    te_sentence = (
+        f' My portfolio differs from the S&P 500 by about <strong>{te_glance*100:.1f}%</strong> per year. '
+        f'{"A higher number means I\'m making more independent bets." if te_glance >= 0.15 else "A very low number means I\'m essentially tracking the index."}'
+        if not np.isnan(te_glance) else ""
+    )
     st.markdown(
         f'<div style="background:linear-gradient(135deg,rgba(10,124,255,0.15),rgba(10,124,255,0.08));'
         f'border-radius:14px;padding:20px 24px;margin-bottom:20px;border:1px solid rgba(10,124,255,0.4);">'
         f'<div style="font-size:11px;font-weight:700;color:#ffffff;letter-spacing:0.08em;'
         f'text-transform:uppercase;margin-bottom:8px;">My Portfolio at a Glance</div>'
-        f'<div style="font-size:15px;color:#ffffff;line-height:1.7;">{narrative}</div></div>',
+        f'<div style="font-size:15px;color:#ffffff;line-height:1.7;">{narrative}{te_sentence}</div></div>',
         unsafe_allow_html=True)
 
     # ── Tabs ──────────────────────────────────────────────────────────────────
@@ -1257,9 +1265,7 @@ def render_performance() -> None:
                     f"{'Consistent' if ir>0.5 else 'Inconsistent' if ir>0 else 'Lagging'} ({ir:.2f})",
                     UP if ir>0.5 else (ORANGE if ir>0 else DOWN),
                     f"IR = {ir:.2f}. Measures how reliably I outperform — not just whether I do on average. Above 0.5 is considered good."), unsafe_allow_html=True)
-        if not np.isnan(te):
-            st.info(f"My portfolio differs from the S&P 500 by about **{te*100:.1f}%** per year. "
-                    f"A higher number means I'm making more independent bets. A very low number means I'm essentially tracking the index.")
+
 
     # ════════════ TAB 1 — RISK & DROPS ═══════════════════════════════════════
     with tabs[1]:
@@ -1397,8 +1403,8 @@ def render_performance() -> None:
                     f'<span style="font-size:{"16px" if is_total else "14px"};font-weight:{"700" if is_total else "500"};color:#ffffff;">{label}</span>'
                     f'<span style="font-size:{"20px" if is_total else "16px"};font-weight:700;color:{color};">{value}</span></div>', unsafe_allow_html=True)
             check = recon["check"]
-            if abs(check)<1.0: st.success(f"✅ Everything checks out (rounding: ${check:.2f})")
-            else: st.warning(f"⚠️ Small discrepancy of ${check:.2f} — check that all deposits and withdrawals are in the CSV.")
+            if abs(check) >= 1.0:
+                st.warning(f"⚠️ Small discrepancy of ${check:.2f} — check that all deposits and withdrawals are in the CSV.")
 
         with col_tx:
             _section_header("All Transactions")
