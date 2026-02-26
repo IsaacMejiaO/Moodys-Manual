@@ -26,8 +26,10 @@ from typing import Dict, List
 _Q_MIN_DAYS = 75
 _Q_MAX_DAYS = 105
 
-# Maximum allowable span for 4 quarters (must cover ~12 months).
-_LTM_MAX_SPAN_DAYS = 380
+# Maximum allowable gap between any two consecutive quarter end-dates.
+# At ~90 days per quarter, 120 days gives a 33-day buffer for late-quarter
+# filings while still rejecting a missing quarter (~180 days apart).
+_MAX_CONSECUTIVE_GAP_DAYS = 120
 
 
 def _is_quarterly(days: int) -> bool:
@@ -161,7 +163,9 @@ def build_ltm(series: pd.Series) -> float:
 
     Returns NaN if:
       - Fewer than 4 quarterly observations are available.
-      - The 4 quarters span more than ~380 days (non-contiguous data).
+      - Any consecutive pair of quarter end-dates is more than ~120 days apart
+        (catches missing intermediate quarters that the old overall-span check
+        would silently accept, e.g. Q1/Q2/Q3/Q5 spanning 15 months).
       - Any of the 4 values is NaN.
 
     This prevents silently producing LTM figures that actually cover
@@ -177,10 +181,14 @@ def build_ltm(series: pd.Series) -> float:
 
     last4 = series.iloc[-4:]
 
-    # Gap check: span from start of earliest quarter to end of latest
-    span_days = (last4.index[-1] - last4.index[0]).days
-    if span_days > _LTM_MAX_SPAN_DAYS:
-        return float("nan")
+    # Per-consecutive-pair gap check: each adjacent pair of quarter end-dates
+    # must be no more than ~120 days apart.  The old overall-span check only
+    # caught total span > 380 days, which could pass a 15-month window if only
+    # one interior quarter was missing (e.g. span of ~365 days for Q1/Q2/Q3/Q5).
+    dates = last4.index.sort_values()
+    for i in range(len(dates) - 1):
+        if (dates[i + 1] - dates[i]).days > _MAX_CONSECUTIVE_GAP_DAYS:
+            return float("nan")
 
     return float(last4.sum())
 
