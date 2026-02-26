@@ -80,7 +80,6 @@ def build_company_summary(
     ebitda_history: Optional[pd.Series] = None,
     net_income_history: Optional[pd.Series] = None,
     eps_history: Optional[pd.Series] = None,
-    eps_history: Optional[pd.Series] = None,
     diluted_eps_history: Optional[pd.Series] = None,
     ar_history: Optional[pd.Series] = None,
     inventory_history: Optional[pd.Series] = None,
