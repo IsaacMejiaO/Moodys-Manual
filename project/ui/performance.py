@@ -1377,7 +1377,9 @@ def render_performance() -> None:
                     sector_agg.setdefault(d["sector"],0.0); sector_agg[d["sector"]] += d["current_value"]
                 sdf = pd.DataFrame([{"Sector":k,"Value":v,"Percentage":v/total_val*100} for k,v in sector_agg.items()]
                 ).sort_values("Value",ascending=False).reset_index(drop=True)
-                chart_height = max(table_height, 200)
+                # Streamlit's dataframe widget adds ~12px of chrome (border + scrollbar)
+                # that Plotly doesn't have, so subtract it so the chart matches visually.
+                chart_height = max(table_height - 12, 200)
                 fig_sector = _chart_sector_fixed_height(sdf, chart_height)
                 st.plotly_chart(fig_sector, width="stretch")
         else:
