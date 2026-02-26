@@ -880,7 +880,7 @@ def render_portfolio_monte_carlo(holdings: dict = None):
     shared_color_map = ranked_blue_map(weights_nonzero * 100)
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Risk Contribution", "Volatility"])
+    tabs = st.tabs(["Allocation", "Frontier & Risk", "Performance", "Volatility"])
 
     # ════════ TAB 0 — ALLOCATION ═════════════════════════════════════════════
     with tabs[0]:
@@ -997,58 +997,30 @@ def render_portfolio_monte_carlo(holdings: dict = None):
                 f"the S&P 500 by {abs(excess)*100:.1f} percentage points per year on a historical basis."
             ), unsafe_allow_html=True)
 
-    # ════════ TAB 3 — RISK CONTRIBUTION ══════════════════════════════════════
+    # ════════ TAB 3 — VOLATILITY ══════════════════════════════════════════════
     with tabs[3]:
-        # Recompute risk contribution breakdown
-        port_variance_t3 = weights @ cov @ weights
-        marginal_contrib_t3 = cov @ weights
-        risk_contrib_t3 = weights * marginal_contrib_t3 / port_variance_t3
-        risk_contrib_pct_t3 = risk_contrib_t3 / risk_contrib_t3.sum() * 100
-
-        top_t3       = risk_contrib_pct_t3.idxmax()
-        top_pct_t3   = float(risk_contrib_pct_t3[top_t3])
-        second_t3    = risk_contrib_pct_t3.drop(top_t3).idxmax() if len(risk_contrib_pct_t3) > 1 else None
-        second_pct_t3 = float(risk_contrib_pct_t3[second_t3]) if second_t3 else 0.0
-        top2_pct_t3  = top_pct_t3 + second_pct_t3
-
-        rc_color_t3 = DOWN if top_pct_t3 > 40 else (ORANGE if top_pct_t3 > 25 else UP)
-        conc_label  = ("Highly concentrated" if top_pct_t3 > 40
-                       else "Moderately concentrated" if top_pct_t3 > 25
-                       else "Well diversified")
-
-        body_parts = [
-            f"{top_t3} is the single largest driver of portfolio volatility, accounting for "
-            f"{top_pct_t3:.1f}% of total risk variance.",
-        ]
-        if second_t3:
-            body_parts.append(
-                f"Together, {top_t3} and {second_t3} account for {top2_pct_t3:.1f}% of risk."
-            )
-        if top_pct_t3 > 40:
-            body_parts.append("Consider trimming or adding an uncorrelated position to reduce concentration.")
-        elif top_pct_t3 > 25:
-            body_parts.append("Risk is moderately concentrated — worth monitoring as the portfolio grows.")
-        else:
-            body_parts.append("Risk is well spread across the portfolio. No single position dominates.")
-
-        st.markdown(_verdict_card(
-            "Contribution to Portfolio Risk",
-            f"{conc_label} — {top_t3} drives {top_pct_t3:.0f}%",
-            rc_color_t3,
-            " ".join(body_parts),
-        ), unsafe_allow_html=True)
-
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-        st.plotly_chart(
-            plot_risk_contribution(weights, cov, color_map=shared_color_map),
-            width="stretch",
-            key="tab3_risk_contrib",
-        )
-
-    # ════════ TAB 4 — VOLATILITY ══════════════════════════════════════════════
-    with tabs[4]:
         st.plotly_chart(
             plot_rolling_volatility(port_series),
             width="stretch",
-            key="tab4_rolling_vol",
+            key="tab3_rolling_vol",
         )
+
+        vol_ann   = float(port_series.std() * np.sqrt(252))
+        v_label, v_color = _vol_verdict(vol_ann)
+        # Regime context: compare current (last 63-day) vol to full-period vol
+        recent_vol = float(port_series.iloc[-63:].std() * np.sqrt(252)) if len(port_series) >= 63 else vol_ann
+        if recent_vol > vol_ann * 1.25:
+            regime = f"Recent volatility ({recent_vol*100:.1f}%) is running above the long-run average — conditions are choppier than usual."
+        elif recent_vol < vol_ann * 0.75:
+            regime = f"Recent volatility ({recent_vol*100:.1f}%) is running below the long-run average — unusually calm period."
+        else:
+            regime = f"Recent volatility ({recent_vol*100:.1f}%) is in line with the long-run average — no unusual swings."
+
+        st.markdown(_verdict_card(
+            "Rolling 1-Year Volatility",
+            f"{v_label} ({vol_ann*100:.1f}% annualized)",
+            v_color,
+            f"The portfolio's annualised standard deviation over the full look-back period is {vol_ann*100:.1f}%. "
+            f"{'Low volatility means steadier day-to-day returns and less emotional strain.' if vol_ann < 0.18 else 'Higher volatility means larger swings in both directions — size positions accordingly.'} "
+            f"{regime}",
+        ), unsafe_allow_html=True)
