@@ -53,37 +53,30 @@ def ranked_blue_map(values: pd.Series, darkest: str = "#104861", lightest: str =
 
 def plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol, port_return, eq_grid):
     """
-    Efficient frontier — styled to match the app's dark transparent chart language:
-    - Transparent background, white axis text, subtle white gridlines
-    - Simulation cloud coloured by Sharpe ratio (green = high, red = low)
-    - Frontier line in app BLUE with a soft fill underneath
-    - Current portfolio marked with a clean white ring + green fill
-    - Equity-weight callouts as small pill annotations on the curve
-    - Right-edge floating label for the frontier (mirrors performance.py pattern)
+    Efficient frontier — clean dark version matching the app's chart language.
+    Simulation cloud coloured by Sharpe ratio. Frontier in BLUE. Portfolio as
+    white-ring + green dot. No axis titles, no fill, no callout annotations.
     """
-    mc_risk_arr = np.array(mc_risk)
-    mc_ret_arr  = np.array(mc_ret)
+    mc_risk_arr    = np.array(mc_risk)
+    mc_ret_arr     = np.array(mc_ret)
     curve_risk_arr = np.array(curve_risk)
     curve_ret_arr  = np.array(curve_ret)
 
-    # ── Sharpe ratio for each simulated portfolio (RFR = 2%) ─────────────────
+    # ── Sharpe ratio colour for each simulated portfolio (RFR = 2%) ───────────
     rf = 0.02
     with np.errstate(divide="ignore", invalid="ignore"):
         mc_sharpe = np.where(mc_risk_arr > 0, (mc_ret_arr - rf) / mc_risk_arr, 0.0)
     sharpe_min, sharpe_max = mc_sharpe.min(), mc_sharpe.max()
     sharpe_range = sharpe_max - sharpe_min if sharpe_max != sharpe_min else 1.0
 
-    # Map each point to a colour: low Sharpe → DOWN red, mid → ORANGE, high → UP green
     def _sharpe_color(s):
         t = float(np.clip((s - sharpe_min) / sharpe_range, 0, 1))
         if t < 0.5:
-            # red → orange
             t2 = t * 2
-            r = int(0xFF + (0xFF - 0xFF) * t2)
+            r = int(0xFF)
             g = int(0x3B + (0x9F - 0x3B) * t2)
             b = int(0x30 + (0x0A - 0x30) * t2)
         else:
-            # orange → green
             t2 = (t - 0.5) * 2
             r = int(0xFF + (0x00 - 0xFF) * t2)
             g = int(0x9F + (0xC8 - 0x9F) * t2)
@@ -99,27 +92,12 @@ def plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol, po
         x=mc_risk_arr * 100,
         y=mc_ret_arr * 100,
         mode="markers",
-        marker=dict(
-            size=3,
-            color=dot_colors,
-            opacity=1,
-        ),
+        marker=dict(size=3, color=dot_colors, opacity=1),
         name="Simulated portfolios",
         hovertemplate="<b>Simulated portfolio</b><br>Vol: %{x:.1f}%<br>Return: %{y:.1f}%<extra></extra>",
     ))
 
-    # ── 2. Frontier fill (soft blue area under the curve) ────────────────────
-    fig.add_trace(go.Scatter(
-        x=curve_risk_arr * 100,
-        y=curve_ret_arr * 100,
-        mode="none",
-        fill="tozeroy",
-        fillcolor="rgba(10,124,255,0.07)",
-        showlegend=False,
-        hoverinfo="skip",
-    ))
-
-    # ── 3. Efficient frontier line ────────────────────────────────────────────
+    # ── 2. Efficient frontier line (no fill) ──────────────────────────────────
     fig.add_trace(go.Scatter(
         x=curve_risk_arr * 100,
         y=curve_ret_arr * 100,
@@ -129,84 +107,40 @@ def plot_efficient_frontier(mc_risk, mc_ret, curve_risk, curve_ret, port_vol, po
         hovertemplate="<b>Efficient Frontier</b><br>Vol: %{x:.1f}%<br>Return: %{y:.1f}%<extra></extra>",
     ))
 
-    # ── 4. Floating right-edge label for the frontier (performance.py style) ──
-    frontier_final_ret = float(curve_ret_arr[-1] * 100)
-    fig.add_annotation(
-        xref="paper", x=1.01,
-        yref="y",     y=frontier_final_ret,
-        text="Frontier",
-        showarrow=False, xanchor="left", yanchor="middle",
-        font=dict(size=11, color=BLUE, family="'SF Pro Display','Segoe UI',sans-serif"),
-        bgcolor="rgba(0,0,0,0.45)", borderpad=4,
-    )
-
-    # ── 5. Equity-weight callouts along the curve ─────────────────────────────
-    label_points = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
-    for lp in label_points:
-        i = int(np.argmin(np.abs(eq_grid - lp)))
-        fig.add_annotation(
-            x=curve_risk_arr[i] * 100,
-            y=curve_ret_arr[i] * 100,
-            text=f"{int(lp * 100)}% eq",
-            showarrow=True,
-            arrowhead=0,
-            arrowwidth=1,
-            arrowcolor="rgba(255,255,255,0.25)",
-            ax=0, ay=-22,
-            font=dict(size=9, color="rgba(255,255,255,0.6)",
-                      family="'SF Pro Display','Segoe UI',sans-serif"),
-            bgcolor="rgba(0,0,0,0)",
-            borderpad=2,
-        )
-
-    # ── 6. Current portfolio marker ───────────────────────────────────────────
+    # ── 3. Portfolio marker — white ring + green fill ─────────────────────────
     port_ret_pct = port_return * 100
     port_vol_pct = port_vol * 100
-    # Outer ring
     fig.add_trace(go.Scatter(
-        x=[port_vol_pct],
-        y=[port_ret_pct],
+        x=[port_vol_pct], y=[port_ret_pct],
         mode="markers",
-        marker=dict(size=22, color="rgba(0,0,0,0)",
-                    line=dict(color="#ffffff", width=2)),
+        marker=dict(size=22, color="rgba(0,0,0,0)", line=dict(color="#ffffff", width=2)),
         hoverinfo="skip",
         showlegend=False,
     ))
-    # Inner filled dot
     fig.add_trace(go.Scatter(
-        x=[port_vol_pct],
-        y=[port_ret_pct],
-        mode="markers+text",
-        marker=dict(size=12, color=UP,
-                    line=dict(color="rgba(0,0,0,0.4)", width=1.5)),
-        text=["Your portfolio"],
-        textposition="top right",
-        textfont=dict(size=11, color="#ffffff",
-                      family="'SF Pro Display','Segoe UI',sans-serif"),
+        x=[port_vol_pct], y=[port_ret_pct],
+        mode="markers",
+        marker=dict(size=12, color=UP, line=dict(color="rgba(0,0,0,0.4)", width=1.5)),
         name="Your Portfolio",
-        hovertemplate=(
-            "<b>Your Portfolio</b><br>"
-            f"Vol: {port_vol_pct:.1f}%<br>"
-            f"Return: {port_ret_pct:.1f}%<extra></extra>"
-        ),
+        hovertemplate=f"<b>Your Portfolio</b><br>Vol: {port_vol_pct:.1f}%<br>Return: {port_ret_pct:.1f}%<extra></extra>",
     ))
 
-    # ── Layout (mirrors performance.py _CHART_LAYOUT) ─────────────────────────
+    # ── Layout ────────────────────────────────────────────────────────────────
     fig.update_layout(
         **_CHART_LAYOUT,
         height=460,
         hovermode="closest",
         showlegend=False,
-        margin=dict(l=55, r=110, t=20, b=55),
+        margin=dict(l=55, r=30, t=20, b=40),
         xaxis=dict(
-            title=dict(text="Volatility (%)", font=dict(color="#ffffff")),
+            title=dict(text=""),
             showgrid=True, gridcolor="rgba(255,255,255,0.08)",
             zeroline=False,
             ticksuffix="%",
             tickfont=dict(color="#ffffff"),
         ),
         yaxis=dict(
-            title=dict(text="Expected Return (%)", font=dict(color="#ffffff")),
+            title=dict(text=""),
             showgrid=True, gridcolor="rgba(255,255,255,0.08)",
             zeroline=False,
             ticksuffix="%",
@@ -220,141 +154,214 @@ def plot_risk_contribution(
     cov_matrix: pd.DataFrame,
     color_map: dict = None,
 ) -> go.Figure:
-    """Plot risk contribution by asset."""
+    """Plot risk contribution by asset — styled to match the app's green bar charts."""
     portfolio_variance = weights @ cov_matrix @ weights
     marginal_contrib = cov_matrix @ weights
     risk_contrib = weights * marginal_contrib / portfolio_variance
     risk_contrib_pct = risk_contrib / risk_contrib.sum() * 100
 
-    risk_color_map = color_map if isinstance(color_map, dict) else ranked_blue_map(risk_contrib_pct)
-    colors = [risk_color_map.get(asset, "#1f77b4") for asset in risk_contrib_pct.index]
-    fig = go.Figure(
-        go.Bar(
-            x=risk_contrib_pct.index,
-            y=risk_contrib_pct.values,
-            marker=dict(color=colors[: len(risk_contrib_pct)], line=dict(color="rgba(0,0,0,0.1)", width=0.5)),
-            text=[f"{v:.1f}%" for v in risk_contrib_pct.values],
-            textposition="inside",
-            insidetextanchor="middle",
-            textfont=dict(color="white", size=11),
-            hovertemplate="<b>%{x}</b><br>%{y:.1f}%<extra></extra>",
-            showlegend=False,
-        )
-    )
+    # Sort descending so highest contributor is at the top
+    risk_contrib_pct = risk_contrib_pct.sort_values(ascending=False)
+    n = len(risk_contrib_pct)
+
+    # Green gradient matching the sector bar charts (bright → darker)
+    greens = [f"rgba(0,{int(200 - 80 * (i / max(n - 1, 1)))},{int(5 + 30 * (i / max(n - 1, 1)))},0.85)"
+              for i in range(n)]
+
+    fig = go.Figure(go.Bar(
+        x=risk_contrib_pct.index,
+        y=risk_contrib_pct.values,
+        marker=dict(color=greens, line=dict(color="rgba(0,0,0,0.1)", width=0.5)),
+        text=[f"{v:.1f}%" for v in risk_contrib_pct.values],
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont=dict(color="white", size=11),
+        hovertemplate="<b>%{x}</b><br>%{y:.1f}%<extra></extra>",
+        showlegend=False,
+    ))
     fig.update_layout(
-        xaxis=dict(title="Asset", showgrid=False),
+        **_CHART_LAYOUT,
+        height=360,
+        margin=dict(l=20, r=20, t=10, b=20),
+        xaxis=dict(
+            showgrid=False,
+            tickfont=dict(color="#ffffff"),
+            title=dict(text=""),
+        ),
         yaxis=dict(
-            title="Risk Contribution (%)",
+            title=dict(text=""),
             showgrid=True,
             gridcolor="rgba(255,255,255,0.1)",
             zeroline=False,
             ticksuffix="%",
             tickfont=dict(color="#ffffff"),
         ),
-        xaxis_title="Asset",
-        yaxis_title="Risk Contribution (%)",
-        height=360,
-        template="plotly_white",
-        margin=dict(l=20, r=20, t=10, b=20),
+        showlegend=False,
     )
     return fig
 
 def plot_rolling_volatility(returns: pd.Series, window: int = 252) -> go.Figure:
-    """Plot rolling volatility."""
+    """Rolling volatility — styled to match the app's dark transparent line charts."""
     rolling_vol = returns.rolling(window).std() * np.sqrt(252)
+    vol_pct     = rolling_vol.dropna() * 100
+    final_vol   = float(vol_pct.iloc[-1]) if not vol_pct.empty else 0.0
+
+    # Use ORANGE for volatility (same colour used for vol metrics elsewhere)
+    line_color = ORANGE
+    r_hex = line_color.lstrip("#")
+    rc, gc, bc = int(r_hex[0:2], 16), int(r_hex[2:4], 16), int(r_hex[4:6], 16)
+
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=rolling_vol.index,
-            y=rolling_vol.values * 100,
-            name="Rolling Volatility (1Y)",
-            line=dict(color="#EF553B", width=2.5),
-            fill="tozeroy",
-            fillcolor="rgba(239, 85, 59, 0.2)",
-        )
+    fig.add_trace(go.Scatter(
+        x=vol_pct.index,
+        y=vol_pct.values,
+        mode="lines",
+        name="Rolling Volatility (1Y)",
+        line=dict(color=line_color, width=3),
+        fill="tozeroy",
+        fillcolor=f"rgba({rc},{gc},{bc},0.08)",
+        hovertemplate="<b>%{x|%B %d, %Y}</b><br>Volatility: <b>%{y:.1f}%</b><extra></extra>",
+        showlegend=False,
+    ))
+    fig.add_annotation(
+        xref="paper", x=1.01,
+        yref="y",     y=final_vol,
+        text=f"{final_vol:.1f}%",
+        showarrow=False, xanchor="left", yanchor="middle",
+        font=dict(size=12, color=line_color, family="'SF Pro Display','Segoe UI',sans-serif"),
+        bgcolor="rgba(0,0,0,0.45)", borderpad=4,
     )
+
     fig.update_layout(
-        xaxis=dict(showgrid=True),
-        yaxis=dict(showgrid=True),
-        xaxis_title="Date",
-        yaxis_title="Volatility (%)",
-        height=495,
-        template="plotly_white",
+        **_CHART_LAYOUT,
+        height=380,
         hovermode="x unified",
         showlegend=False,
-        margin=dict(l=50, r=30, t=10, b=50),
+        margin=dict(l=55, r=120, t=20, b=40),
+        xaxis=dict(
+            showgrid=True, gridcolor="rgba(255,255,255,0.1)",
+            zeroline=False, tickfont=dict(color="#ffffff"),
+        ),
+        yaxis=dict(
+            title=dict(text=""),
+            ticksuffix="%",
+            showgrid=True, gridcolor="rgba(255,255,255,0.1)",
+            zeroline=False, tickfont=dict(color="#ffffff"),
+        ),
     )
     return fig
 
 def plot_cumulative_returns(returns: pd.Series, benchmark_returns: pd.Series = None) -> go.Figure:
-    """Plot cumulative returns vs benchmark."""
+    """
+    Cumulative returns vs S&P 500 — mirrors performance.py _chart_performance:
+    - Portfolio line: UP green (positive) or DOWN red (negative), with fill
+    - Benchmark line: ORANGE, no fill
+    - Right-edge floating annotations for both lines
+    - Transparent dark background, white grids, no axis titles
+    """
     cum_returns = (1 + returns).cumprod()
+    port_ret    = (cum_returns - 1) * 100
+    final_ret   = float(port_ret.iloc[-1]) if not port_ret.empty else 0.0
+
+    port_color = UP if final_ret >= 0 else DOWN
+    r_hex = port_color.lstrip("#")
+    rc, gc, bc = int(r_hex[0:2], 16), int(r_hex[2:4], 16), int(r_hex[4:6], 16)
+    port_sign = "▲" if final_ret >= 0 else "▼"
+
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=cum_returns.index,
-            y=(cum_returns - 1) * 100,
-            name="Portfolio",
-            line=dict(color="#1f77b4", width=3),
-            fill="tozeroy",
-            fillcolor="rgba(31, 119, 180, 0.1)",
-        )
+
+    fig.add_trace(go.Scatter(
+        x=port_ret.index,
+        y=port_ret.values,
+        mode="lines",
+        name="Portfolio",
+        line=dict(color=port_color, width=3),
+        fill="tozeroy",
+        fillcolor=f"rgba({rc},{gc},{bc},0.08)",
+        hovertemplate="<b>%{x|%B %d, %Y}</b><br>Portfolio: <b>%{y:+.2f}%</b><extra></extra>",
+        showlegend=False,
+    ))
+    fig.add_annotation(
+        xref="paper", x=1.01,
+        yref="y",     y=final_ret,
+        text=f"{port_sign} {final_ret:+.1f}%",
+        showarrow=False, xanchor="left", yanchor="middle",
+        font=dict(size=12, color=port_color, family="'SF Pro Display','Segoe UI',sans-serif"),
+        bgcolor="rgba(0,0,0,0.45)", borderpad=4,
     )
+
     if benchmark_returns is not None:
-        cum_bench = (1 + benchmark_returns).cumprod()
-        fig.add_trace(
-            go.Scatter(
-                x=cum_bench.index,
-                y=(cum_bench - 1) * 100,
-                name="Benchmark (SPY)",
-                line=dict(color="orange", width=2.5, dash="dash"),
-            )
+        cum_bench  = (1 + benchmark_returns).cumprod()
+        bm_ret     = (cum_bench - 1) * 100
+        bm_final   = float(bm_ret.iloc[-1]) if not bm_ret.empty else 0.0
+        bm_sign    = "▲" if bm_final >= 0 else "▼"
+
+        fig.add_trace(go.Scatter(
+            x=bm_ret.index,
+            y=bm_ret.values,
+            mode="lines",
+            name="S&P 500",
+            line=dict(color=ORANGE, width=3),
+            hovertemplate="<b>%{x|%B %d, %Y}</b><br>S&P 500: <b>%{y:+.2f}%</b><extra></extra>",
+            showlegend=False,
+        ))
+        fig.add_annotation(
+            xref="paper", x=1.01,
+            yref="y",     y=bm_final,
+            text=f"{bm_sign} {bm_final:+.1f}%",
+            showarrow=False, xanchor="left", yanchor="middle",
+            font=dict(size=12, color=ORANGE, family="'SF Pro Display','Segoe UI',sans-serif"),
+            bgcolor="rgba(0,0,0,0.45)", borderpad=4,
         )
 
     fig.update_layout(
-        xaxis=dict(showgrid=True),
-        yaxis=dict(showgrid=True),
-        xaxis_title="Date",
-        yaxis_title="Cumulative Return (%)",
-        height=360,
-        template="plotly_white",
+        **_CHART_LAYOUT,
+        height=380,
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="top", y=1.15, xanchor="left", x=0),
-        margin=dict(l=50, r=30, t=10, b=50),
+        showlegend=False,
+        margin=dict(l=55, r=120, t=20, b=40),
+        xaxis=dict(
+            showgrid=True, gridcolor="rgba(255,255,255,0.1)",
+            zeroline=False, tickfont=dict(color="#ffffff"),
+        ),
+        yaxis=dict(
+            title=dict(text=""),
+            ticksuffix="%", tickformat="+.1f",
+            showgrid=True, gridcolor="rgba(255,255,255,0.1)",
+            zeroline=False, tickfont=dict(color="#ffffff"),
+        ),
     )
     return fig
 
 def plot_allocation_donut(weights: pd.Series, color_map: dict = None) -> go.Figure:
-    """Portfolio weights donut chart."""
-    labels = []
-    values = []
-    colors = []
+    """Portfolio weights donut chart — green gradient matching bar charts."""
+    # Sort descending so the largest slice gets the brightest green
+    weights_sorted = weights[weights > 0].sort_values(ascending=False)
+    n = len(weights_sorted)
 
-    weight_pct = weights * 100
-    asset_color_map = color_map if isinstance(color_map, dict) else ranked_blue_map(weight_pct)
+    labels = weights_sorted.index.tolist()
+    values = (weights_sorted * 100).tolist()
+    colors = [
+        f"rgba(0,{int(200 - 80 * (i / max(n - 1, 1)))},{int(5 + 30 * (i / max(n - 1, 1)))},0.85)"
+        for i in range(n)
+    ]
 
-    for i, asset in enumerate(weights.index):
-        val = float(weights.loc[asset]) * 100
-        if val <= 0:
-            continue
-        labels.append(asset)
-        values.append(val)
-        colors.append(asset_color_map.get(asset, "#1f77b4"))
-
-    fig = go.Figure(
-        data=[
-            go.Pie(
-                labels=labels,
-                values=values,
-                hole=0.55,
-                marker=dict(colors=colors, line=dict(width=0)),
-                textinfo="label+percent",
-                hovertemplate="%{label}: %{value:.2f}%<extra></extra>",
-                sort=False,
-            )
-        ]
+    fig = go.Figure(data=[go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.55,
+        marker=dict(colors=colors, line=dict(width=0)),
+        textinfo="label+percent",
+        textfont=dict(color="#ffffff"),
+        hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
+        sort=False,
+    )])
+    fig.update_layout(
+        **_CHART_LAYOUT,
+        height=320,
+        margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=False,
     )
-    fig.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), showlegend=False)
     return fig
 
 def plot_correlation_heatmap(asset_returns: pd.DataFrame) -> go.Figure:
