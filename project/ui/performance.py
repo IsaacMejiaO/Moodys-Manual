@@ -1230,6 +1230,7 @@ def render_performance() -> None:
             xv = returns["xirr"]
             st.markdown(_metric_card("xirr", f"{xv*100:+.1f}%/yr" if not np.isnan(xv) else "N/A",
                                      UP if not np.isnan(xv) and xv>=0 else DOWN), unsafe_allow_html=True)
+        st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
         st.radio("Period:", options=PERIODS, format_func=lambda k: _PERIOD_NAMES.get(k,k),
                  index=PERIODS.index(st.session_state.chart_period), horizontal=True,
                  key="chart_period", label_visibility="collapsed")
@@ -1297,6 +1298,7 @@ def render_performance() -> None:
                 override_label="When It Recovered",
                 override_tooltip="Date my portfolio returned to its previous all-time high."), unsafe_allow_html=True)
 
+            st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
             st.radio("Period:", options=PERIODS, format_func=lambda k: _PERIOD_NAMES.get(k,k),
                      index=PERIODS.index(st.session_state.risk_chart_period), horizontal=True,
                      key="risk_chart_period", label_visibility="collapsed")
