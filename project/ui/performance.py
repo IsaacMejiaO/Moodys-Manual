@@ -1273,12 +1273,8 @@ def render_performance() -> None:
         calmar=risk.get("calmar",np.nan); mdd=risk.get("max_drawdown",np.nan)
         s_label,s_color = _sharpe_verdict(sharpe); m_label,m_color = _mdd_verdict(mdd)
 
-        st.radio("Period:", options=PERIODS, format_func=lambda k: _PERIOD_NAMES.get(k,k),
-                 index=PERIODS.index(st.session_state.risk_chart_period), horizontal=True,
-                 key="risk_chart_period", label_visibility="collapsed")
-
+        # Pre-compute dd_df using current period selection (before rendering cards)
         if st.session_state.risk_chart_period == "1Y" and not _has_full_period_history(hist, "1Y"):
-            st.info("Chart not available yet: Not enough data for a full '1Y' view.")
             dd_df = pd.DataFrame()
         else:
             dd_hist = _slice_period(hist, st.session_state.risk_chart_period)
@@ -1300,6 +1296,19 @@ def render_performance() -> None:
                 recovery_date.strftime("%b %Y") if recovery_date else "Still recovering", "#ffffff",
                 override_label="When It Recovered",
                 override_tooltip="Date my portfolio returned to its previous all-time high."), unsafe_allow_html=True)
+
+            st.radio("Period:", options=PERIODS, format_func=lambda k: _PERIOD_NAMES.get(k,k),
+                     index=PERIODS.index(st.session_state.risk_chart_period), horizontal=True,
+                     key="risk_chart_period", label_visibility="collapsed")
+
+            if st.session_state.risk_chart_period == "1Y" and not _has_full_period_history(hist, "1Y"):
+                st.info("Chart not available yet: Not enough data for a full '1Y' view.")
+                dd_df = pd.DataFrame()
+            else:
+                dd_hist = _slice_period(hist, st.session_state.risk_chart_period)
+                dd_df = compute_drawdown_series(dd_hist)
+
+        if not dd_df.empty:
             st.plotly_chart(_chart_drawdown(dd_df, bench, st.session_state.risk_chart_period), width="stretch")
 
             # Build episodes list
