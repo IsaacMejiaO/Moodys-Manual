@@ -407,8 +407,9 @@ INCOME_SCHEMA: List[Tuple] = [
         "DividendsPreferredStock",
         "DividendsPreferredStockCash",
     ], False, 2),
+]
 
-    ("_spacer_per_share_", [], False, 0),
+PER_SHARE_SCHEMA: List[Tuple] = [
 
     # ── PER SHARE ─────────────────────────────────────────────────────────────
     ("PER SHARE", [], False, 0),
@@ -1571,8 +1572,8 @@ def render_financials(ticker: str) -> None:
 
     N = 5  # fixed 5 fiscal years
 
-    # ── Statement tabs (no emojis) ────────────────────────────────────────────
-    tab_is, tab_bs, tab_cf = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow Statement"])
+    # ── Statement tabs ────────────────────────────────────────────────────────
+    tab_is, tab_ps, tab_bs, tab_cf = st.tabs(["Income Statement", "Per Share", "Balance Sheet", "Cash Flow Statement"])
 
     # ── Income Statement ──────────────────────────────────────────────────────
     with tab_is:
@@ -1583,6 +1584,15 @@ def render_financials(ticker: str) -> None:
             st.warning(f"No Income Statement data for {ticker}.")
         else:
             st.markdown(_render_table(is_df, INCOME_SCHEMA, is_src, divisor, unit_lbl), unsafe_allow_html=True)
+
+    # ── Per Share ─────────────────────────────────────────────────────────────
+    with tab_ps:
+        with st.spinner("Loading…"):
+            ps_df, ps_src = _build_df(PER_SHARE_SCHEMA, facts, yf_data["is"], _YF_IS, N)
+        if ps_df.empty:
+            st.warning(f"No Per Share data for {ticker}.")
+        else:
+            st.markdown(_render_table(ps_df, PER_SHARE_SCHEMA, ps_src, divisor, unit_lbl), unsafe_allow_html=True)
 
     # ── Balance Sheet ─────────────────────────────────────────────────────────
     with tab_bs:
