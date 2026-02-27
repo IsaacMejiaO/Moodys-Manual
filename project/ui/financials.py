@@ -391,32 +391,8 @@ INCOME_SCHEMA: List[Tuple] = [
         "DividendsPreferredStockCash",
     ], False, 2),
 
-    # ── PER SHARE ─────────────────────────────────────────────────────────────
-    ("PER SHARE", [], False, 0),
-
-    ("EPS — Basic", [
-        "EarningsPerShareBasic",
-        "IncomeLossFromContinuingOperationsPerBasicShare",
-    ], False, 1),
-
-    ("EPS — Diluted", [
-        "EarningsPerShareDiluted",
-        "IncomeLossFromContinuingOperationsPerDilutedShare",
-        "EarningsPerShareBasicAndDiluted",
-    ], False, 1),
-
-    ("Shares Outstanding — Basic (M)", [
-        "WeightedAverageNumberOfSharesOutstandingBasic",
-        "CommonStockSharesOutstanding",
-    ], False, 1),
-
-    ("Shares Outstanding — Diluted (M)", [
-        "WeightedAverageNumberOfDilutedSharesOutstanding",
-        "WeightedAverageNumberOfSharesOutstandingDiluted",
-    ], False, 1),
-
-    # ── SUPPLEMENTAL ─────────────────────────────────────────────────────────
-    ("SUPPLEMENTAL", [], False, 0),
+    # ── NON-CASH & KEY METRICS ────────────────────────────────────────────────
+    ("NON-CASH & KEY METRICS", [], False, 0),
 
     ("EBITDA", [], True, 1),  # computed: EBIT + D&A
 
@@ -440,6 +416,30 @@ INCOME_SCHEMA: List[Tuple] = [
         "PaymentsToAcquireProductiveAssets",
         "CapitalExpenditures",
     ], False, 2),
+
+    # ── PER SHARE ─────────────────────────────────────────────────────────────
+    ("PER SHARE", [], False, 0),
+
+    ("EPS — Basic", [
+        "EarningsPerShareBasic",
+        "IncomeLossFromContinuingOperationsPerBasicShare",
+    ], False, 1),
+
+    ("EPS — Diluted", [
+        "EarningsPerShareDiluted",
+        "IncomeLossFromContinuingOperationsPerDilutedShare",
+        "EarningsPerShareBasicAndDiluted",
+    ], False, 1),
+
+    ("Shares Outstanding — Basic (M)", [
+        "WeightedAverageNumberOfSharesOutstandingBasic",
+        "CommonStockSharesOutstanding",
+    ], False, 1),
+
+    ("Shares Outstanding — Diluted (M)", [
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "WeightedAverageNumberOfSharesOutstandingDiluted",
+    ], False, 1),
 ]
 
 BALANCE_SHEET_SCHEMA: List[Tuple] = [
@@ -775,8 +775,8 @@ BALANCE_SHEET_SCHEMA: List[Tuple] = [
         "LiabilitiesAndMembersEquity",
     ], True, 1),
 
-    # ── SUPPLEMENTAL ─────────────────────────────────────────────────────────
-    ("SUPPLEMENTAL", [], False, 0),
+    # ── KEY METRICS ───────────────────────────────────────────────────────────
+    ("KEY METRICS", [], False, 0),
 
     ("Total Debt (Gross)", [
         "DebtLongtermAndShorttermCombinedAmount",
@@ -913,6 +913,10 @@ CASH_FLOW_SCHEMA: List[Tuple] = [
         "NetCashProvidedByUsedInOperatingActivities",
         "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
     ], True, 1),
+
+    ("Free Cash Flow", [], True, 1),      # computed: CFO − |CapEx|
+    ("  FCF Margin (%)", [], False, 2),   # computed
+    ("  FCF / Net Income (%)", [], False, 2),  # computed
 
     # ══ INVESTING ACTIVITIES ════════════════════════════════════════════════════
     ("INVESTING ACTIVITIES", [], False, 0),
@@ -1084,8 +1088,6 @@ CASH_FLOW_SCHEMA: List[Tuple] = [
         "NetCashProvidedByUsedInContinuingOperations",
     ], True, 1),
 
-    ("SUPPLEMENTAL", [], False, 0),
-
     ("  Cash Paid for Interest", [
         "InterestPaidNet",
         "InterestPaid",
@@ -1096,10 +1098,6 @@ CASH_FLOW_SCHEMA: List[Tuple] = [
         "IncomeTaxesPaid",
         "IncomeTaxesPaidNet",
     ], False, 2),
-
-    ("Free Cash Flow", [], True, 1),      # computed: CFO − |CapEx|
-    ("  FCF Margin (%)", [], False, 2),   # computed
-    ("  FCF / Net Income (%)", [], False, 2),  # computed
 ]
 
 
