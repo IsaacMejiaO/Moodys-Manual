@@ -408,6 +408,8 @@ INCOME_SCHEMA: List[Tuple] = [
         "DividendsPreferredStockCash",
     ], False, 2),
 
+    ("_spacer_per_share_", [], False, 0),
+
     # ── PER SHARE ─────────────────────────────────────────────────────────────
     ("PER SHARE", [], False, 0),
 
@@ -1213,6 +1215,7 @@ html,body,[class*="css"]{{font-family:'Inter',-apple-system,'Segoe UI',sans-seri
 .ry td.tl{{padding-left:20px!important;font-style:italic;}}
 .vp{{color:{UP}!important;}}.vn{{color:{DOWN}!important;}}.vna{{color:rgba(255,255,255,.35)!important;}}.vpc{{font-size:11px!important;color:#ffffff!important;}}.veps{{font-style:italic;}}
 .struct-ban{{background:rgba(255,159,10,.07);border:1px solid rgba(255,159,10,.22);border-radius:10px;padding:13px 18px;margin-bottom:14px;font-size:12.5px;color:rgba(255,255,255,.78);line-height:1.72;}}
+.calc-badge{{display:inline-block;font-size:8.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.35);background:rgba(255,255,255,.07);border-radius:3px;padding:1px 4px;margin-left:6px;vertical-align:middle;}}
 .fin-note{{margin-top:22px;padding:12px 16px;background:rgba(255,255,255,.015);border-radius:8px;font-size:10.5px;color:rgba(255,255,255,.5);line-height:1.85;}}
 </style>""", unsafe_allow_html=True)
 
@@ -1480,7 +1483,10 @@ def _render_table(
 
         # Section banner
         if not tags and indent == 0:
-            html += f'<tr class="rs"><td class="tl" colspan="{1+len(cols)}">{label}</td></tr>'
+            if label.startswith("_spacer_"):
+                html += f'<tr class="rspacer"><td colspan="{1+len(cols)}" style="padding:6px 0;border:none;background:transparent;"></td></tr>'
+            else:
+                html += f'<tr class="rs"><td class="tl" colspan="{1+len(cols)}">{label}</td></tr>'
             continue
 
         # Computed placeholder not yet filled
@@ -1489,7 +1495,8 @@ def _render_table(
 
         row_cls = "rt" if is_sub else f"ri{indent}"
 
-        cells = f'<td class="tl">{label}</td>'
+        badge = ' <span class="calc-badge">calc</span>' if src.get(label) == "calc" else ""
+        cells = f'<td class="tl">{label}{badge}</td>'
         for col in cols:
             v = row[col]
             txt, vcls = _fmt(v, label, divisor, None)
@@ -1596,15 +1603,3 @@ def render_financials(ticker: str) -> None:
             st.warning(f"No Cash Flow Statement data for {ticker}.")
         else:
             st.markdown(_render_table(cf_df, CASH_FLOW_SCHEMA, cf_src, divisor, unit_lbl), unsafe_allow_html=True)
-
-    # ── Footnote ─────────────────────────────────────────────────────────────
-    st.markdown(
-        '<div class="fin-note">'
-        'Source: SEC EDGAR XBRL companyfacts (10-K annual filings). '
-        'Latest accession per fiscal-year-end wins — restatements applied automatically. '
-        'yfinance used as fallback when XBRL returns no data. '
-        'EBITDA = EBIT + D&amp;A · FCF = CFO − |CapEx| · '
-        'FCF Margin = FCF ÷ Revenue · Net Cash = Cash + ST Investments − Debt.'
-        '</div>',
-        unsafe_allow_html=True,
-    )
