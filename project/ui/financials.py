@@ -1207,25 +1207,25 @@ def _inject_css() -> None:
 html,body,[class*="css"]{{font-family:'Inter',-apple-system,'Segoe UI',sans-serif;}}
 .stTabs [data-baseweb="tab-list"]{{gap:0;border-bottom:1px solid rgba(255,255,255,0.1);background:transparent!important;}}
 .stTabs [data-baseweb="tab"]{{font-weight:600;font-size:13px;padding:10px 22px;color:rgba(255,255,255,0.45);background:transparent!important;border-bottom:2px solid transparent;border-radius:0;}}
-.stTabs [aria-selected="true"]{{color:#fff!important;border-bottom:2px solid {BLUE}!important;background:transparent!important;}}
+.stTabs [aria-selected="true"]{{color:#fff!important;border-bottom:2px solid rgba(255,255,255,0.6)!important;background:transparent!important;}}
 .fin-wrap{{overflow-x:auto;border-radius:12px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.015);margin-top:8px;}}
 .fin-table{{width:100%;border-collapse:collapse;font-size:12.5px;}}
-.fin-table thead th{{background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.4);font-weight:700;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;padding:10px 16px 9px;border-bottom:1px solid rgba(255,255,255,0.09);text-align:right;white-space:nowrap;}}
+.fin-table thead th{{background:rgba(255,255,255,0.04);color:#ffffff;font-weight:700;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;padding:10px 16px 9px;border-bottom:1px solid rgba(255,255,255,0.09);text-align:right;white-space:nowrap;}}
 .fin-table thead th.hl{{text-align:left;min-width:240px;max-width:300px;}}
 .fin-table thead th.hy{{min-width:88px;}}
-.fin-table td{{padding:5px 16px;border-bottom:1px solid rgba(255,255,255,.035);color:rgba(255,255,255,.85);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}}
+.fin-table td{{padding:5px 16px;border-bottom:1px solid rgba(255,255,255,.035);color:#ffffff;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}}
 .fin-table td.tl{{text-align:left;}}
 .fin-table tbody tr:hover td{{background:rgba(255,255,255,.022);}}
-.rs td{{font-size:9.5px!important;font-weight:800!important;letter-spacing:.13em!important;text-transform:uppercase!important;color:rgba(255,255,255,.55)!important;background:rgba(255,255,255,.04)!important;padding-top:11px!important;padding-bottom:5px!important;border-top:1px solid rgba(255,255,255,.07)!important;border-bottom:none!important;}}
+.rs td{{font-size:9.5px!important;font-weight:800!important;letter-spacing:.13em!important;text-transform:uppercase!important;color:#ffffff!important;background:rgba(255,255,255,.04)!important;padding-top:11px!important;padding-bottom:5px!important;border-top:1px solid rgba(255,255,255,.07)!important;border-bottom:none!important;}}
 .rt td{{font-weight:700!important;color:#fff!important;border-top:1px solid rgba(255,255,255,.14)!important;border-bottom:1px solid rgba(255,255,255,.14)!important;background:rgba(255,255,255,.018)!important;}}
 .ri1 td.tl{{padding-left:16px!important;}}
 .ri2 td.tl{{padding-left:32px!important;color:#ffffff!important;font-size:12px!important;}}
 .ri3 td.tl{{padding-left:48px!important;color:#ffffff!important;font-size:11.5px!important;}}
-.ry td{{font-size:10px!important;padding-top:2px!important;padding-bottom:2px!important;border-bottom:1px solid rgba(255,255,255,.025)!important;background:rgba(0,0,0,.1)!important;color:rgba(255,255,255,.38)!important;}}
+.ry td{{font-size:10px!important;padding-top:2px!important;padding-bottom:2px!important;border-bottom:1px solid rgba(255,255,255,.025)!important;background:rgba(0,0,0,.1)!important;color:rgba(255,255,255,.55)!important;}}
 .ry td.tl{{padding-left:20px!important;font-style:italic;}}
-.vp{{color:{UP}!important;}}.vn{{color:{DOWN}!important;}}.vna{{color:rgba(255,255,255,.2)!important;}}.vpc{{font-size:11px!important;color:rgba(255,255,255,.7)!important;}}.veps{{font-style:italic;}}
+.vp{{color:{UP}!important;}}.vn{{color:{DOWN}!important;}}.vna{{color:rgba(255,255,255,.35)!important;}}.vpc{{font-size:11px!important;color:#ffffff!important;}}.veps{{font-style:italic;}}
 .struct-ban{{background:rgba(255,159,10,.07);border:1px solid rgba(255,159,10,.22);border-radius:10px;padding:13px 18px;margin-bottom:14px;font-size:12.5px;color:rgba(255,255,255,.78);line-height:1.72;}}
-.fin-note{{margin-top:22px;padding:12px 16px;background:rgba(255,255,255,.015);border-radius:8px;font-size:10.5px;color:rgba(255,255,255,.4);line-height:1.85;}}
+.fin-note{{margin-top:22px;padding:12px 16px;background:rgba(255,255,255,.015);border-radius:8px;font-size:10.5px;color:rgba(255,255,255,.5);line-height:1.85;}}
 </style>""", unsafe_allow_html=True)
 
 
@@ -1475,7 +1475,7 @@ def _render_table(
     if df.empty:
         return "<p style='color:rgba(255,255,255,.35)'>No data available.</p>"
 
-    cols = list(df.columns)   # oldest → newest (left → right)
+    cols = list(df.columns)   # oldest → newest (left → right), newest on right
     hdrs = [c.strftime("FY%Y") for c in cols]
 
     h = f'<th class="hl">{unit_lbl}</th>' + "".join(f'<th class="hy">{y}</th>' for y in hdrs)
