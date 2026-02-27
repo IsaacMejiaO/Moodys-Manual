@@ -246,6 +246,8 @@ INCOME_SCHEMA: List[Tuple] = [
         "DepreciationNonproduction",
     ], False, 2),
 
+    ("EBITDA", [], True, 1),  # computed: EBIT + D&A
+
     ("  Stock-Based Compensation", [
         "ShareBasedCompensation",
         "AllocatedShareBasedCompensationExpense",
@@ -308,8 +310,6 @@ INCOME_SCHEMA: List[Tuple] = [
         "OperatingIncome",
         "IncomeLossFromContinuingOperationsBeforeInterestExpenseInterestIncomeIncomeTaxesExtraordinaryItemsNoncontrollingInterestsNet",
     ], True, 1),
-
-    ("EBITDA", [], True, 1),  # computed: EBIT + D&A
 
     # ── BELOW OPERATING LINE ──────────────────────────────────────────────────
     ("Interest Expense", [
