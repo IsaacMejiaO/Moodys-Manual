@@ -768,24 +768,6 @@ BALANCE_SHEET_SCHEMA: List[Tuple] = [
         "LiabilitiesAndPartnersCapital",
         "LiabilitiesAndMembersEquity",
     ], True, 1),
-
-    # ── KEY METRICS ───────────────────────────────────────────────────────────
-    ("KEY METRICS", [], False, 0),
-
-    ("Total Debt (Gross)", [
-        "DebtLongtermAndShorttermCombinedAmount",
-        "LongTermDebtAndCapitalLeaseObligations",
-        "LongTermDebt",
-        "DebtAndCapitalLeaseObligations",
-    ], False, 1),
-
-    ("Net Cash & Investments", [], False, 1),   # computed
-    ("Book Value per Share", [], False, 1),      # computed
-
-    ("  Shares Outstanding (M)", [
-        "CommonStockSharesOutstanding",
-        "CommonStockSharesIssued",
-    ], False, 2),
 ]
 
 CASH_FLOW_SCHEMA: List[Tuple] = [
@@ -1152,7 +1134,6 @@ _YF_BS: Dict[str, str] = {
     "Total Stockholders' Equity":           "Stockholders Equity",
     "  Noncontrolling Interests":           "Minority Interest",
     "Total Liabilities & Equity":           "Total Assets",
-    "Total Debt (Gross)":                   "Total Debt",
 }
 _YF_CF: Dict[str, str] = {
     "  Net Income":                         "Net Income",
@@ -1383,20 +1364,6 @@ def _inject_is_computed(df: pd.DataFrame, src: Dict[str, str]) -> None:
 def _inject_bs_computed(df: pd.DataFrame, src: Dict[str, str], yf_info: dict) -> None:
     if df.empty:
         return
-    if "Net Cash & Investments" in df.index:
-        cash  = df.loc["  Cash & Cash Equivalents"]   if "  Cash & Cash Equivalents"   in df.index else pd.Series(dtype=float)
-        stinv = df.loc["  Short-Term Investments"]    if "  Short-Term Investments"    in df.index else pd.Series(dtype=float)
-        debt  = df.loc["Total Debt (Gross)"]           if "Total Debt (Gross)"           in df.index else pd.Series(dtype=float)
-        if not cash.dropna().empty and not debt.dropna().empty:
-            nc = cash.add(stinv.fillna(0), fill_value=0).sub(debt.abs().fillna(0), fill_value=0)
-            df.loc["Net Cash & Investments"] = nc
-            src["Net Cash & Investments"]    = "calc"
-    if "Book Value per Share" in df.index:
-        eq  = df.loc["Total Stockholders' Equity"] if "Total Stockholders' Equity" in df.index else pd.Series(dtype=float)
-        shs = yf_info.get("sharesOutstanding", np.nan)
-        if not eq.dropna().empty and not pd.isna(shs) and shs > 0:
-            df.loc["Book Value per Share"] = eq.div(shs)
-            src["Book Value per Share"]    = "calc"
 
 
 def _inject_cf_computed(df: pd.DataFrame, src: Dict[str, str], is_df: pd.DataFrame) -> None:
