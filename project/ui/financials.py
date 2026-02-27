@@ -1216,19 +1216,16 @@ html,body,[class*="css"]{{font-family:'Inter',-apple-system,'Segoe UI',sans-seri
 .fin-table td{{padding:5px 16px;border-bottom:1px solid rgba(255,255,255,.035);color:rgba(255,255,255,.85);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}}
 .fin-table td.tl{{text-align:left;}}
 .fin-table tbody tr:hover td{{background:rgba(255,255,255,.022);}}
-.rs td{{font-size:9.5px!important;font-weight:800!important;letter-spacing:.13em!important;text-transform:uppercase!important;color:rgba(255,255,255,.3)!important;background:rgba(10,124,255,.055)!important;padding-top:11px!important;padding-bottom:5px!important;border-top:1px solid rgba(255,255,255,.07)!important;border-bottom:none!important;}}
+.rs td{{font-size:9.5px!important;font-weight:800!important;letter-spacing:.13em!important;text-transform:uppercase!important;color:rgba(255,255,255,.55)!important;background:rgba(255,255,255,.04)!important;padding-top:11px!important;padding-bottom:5px!important;border-top:1px solid rgba(255,255,255,.07)!important;border-bottom:none!important;}}
 .rt td{{font-weight:700!important;color:#fff!important;border-top:1px solid rgba(255,255,255,.14)!important;border-bottom:1px solid rgba(255,255,255,.14)!important;background:rgba(255,255,255,.018)!important;}}
 .ri1 td.tl{{padding-left:16px!important;}}
-.ri2 td.tl{{padding-left:32px!important;color:rgba(255,255,255,.6)!important;font-size:12px!important;}}
-.ri3 td.tl{{padding-left:48px!important;color:rgba(255,255,255,.42)!important;font-size:11.5px!important;}}
+.ri2 td.tl{{padding-left:32px!important;color:#ffffff!important;font-size:12px!important;}}
+.ri3 td.tl{{padding-left:48px!important;color:#ffffff!important;font-size:11.5px!important;}}
 .ry td{{font-size:10px!important;padding-top:2px!important;padding-bottom:2px!important;border-bottom:1px solid rgba(255,255,255,.025)!important;background:rgba(0,0,0,.1)!important;color:rgba(255,255,255,.38)!important;}}
 .ry td.tl{{padding-left:20px!important;font-style:italic;}}
-.vp{{color:{UP}!important;}}.vn{{color:{DOWN}!important;}}.vna{{color:rgba(255,255,255,.2)!important;}}.vpc{{font-size:11px!important;color:rgba(255,255,255,.45)!important;}}.veps{{font-style:italic;}}
-.sb{{display:inline-block;font-size:8.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:1px 5px;border-radius:3px;margin-left:5px;vertical-align:middle;opacity:.65;}}
-.sb-sec{{background:rgba(10,124,255,.2);color:{BLUE};}}.sb-yf{{background:rgba(255,159,10,.2);color:{ORANGE};}}.sb-calc{{background:rgba(0,200,5,.12);color:{UP};}}
+.vp{{color:{UP}!important;}}.vn{{color:{DOWN}!important;}}.vna{{color:rgba(255,255,255,.2)!important;}}.vpc{{font-size:11px!important;color:rgba(255,255,255,.7)!important;}}.veps{{font-style:italic;}}
 .struct-ban{{background:rgba(255,159,10,.07);border:1px solid rgba(255,159,10,.22);border-radius:10px;padding:13px 18px;margin-bottom:14px;font-size:12.5px;color:rgba(255,255,255,.78);line-height:1.72;}}
-.hist-pill{{display:inline-block;font-size:11px;font-weight:700;padding:3px 13px;border-radius:20px;margin-bottom:10px;border:1px solid currentColor;}}
-.fin-note{{margin-top:22px;padding:12px 16px;background:rgba(255,255,255,.015);border-radius:8px;font-size:10.5px;color:rgba(255,255,255,.28);line-height:1.85;}}
+.fin-note{{margin-top:22px;padding:12px 16px;background:rgba(255,255,255,.015);border-radius:8px;font-size:10.5px;color:rgba(255,255,255,.4);line-height:1.85;}}
 </style>""", unsafe_allow_html=True)
 
 
@@ -1442,14 +1439,20 @@ def _fmt(val: float, label: str, divisor: float, cs_base: Optional[float]) -> Tu
     if label in _PCT_ROWS:
         return f"{val:.1f}%", "vpc"
     if label in _PER_SHARE:
-        return f"${val:.2f}", "veps"
+        s = val
+        txt = f"(${abs(s):.2f})" if s < 0 else f"${s:.2f}"
+        return txt, ("vn" if s < 0 else "veps")
     if label in _SHARE_CNT:
         return f"{val/1e6:,.1f}M", ""
     if cs_base is not None and not pd.isna(cs_base) and cs_base != 0:
         return f"{val/cs_base*100:.1f}%", "vpc"
     s = val / divisor
-    txt = f"{s:,.0f}" if abs(s) >= 100 else f"{s:,.2f}"
-    cls = "" if label in _PCT_ROWS else ("vn" if val < 0 else "")
+    if abs(s) >= 100:
+        num_str = f"{abs(s):,.0f}"
+    else:
+        num_str = f"{abs(s):,.2f}"
+    txt = f"({num_str})" if s < 0 else num_str
+    cls = "vn" if s < 0 else ""
     return txt, cls
 
 
@@ -1468,28 +1471,23 @@ def _render_table(
     src: Dict[str, str],
     divisor: float,
     unit_lbl: str,
-    cs_on: bool,
-    cs_row: str,
-    hide_empty: bool,
 ) -> str:
     if df.empty:
         return "<p style='color:rgba(255,255,255,.35)'>No data available.</p>"
 
-    cols = list(reversed(list(df.columns)))   # newest left
+    cols = list(df.columns)   # oldest → newest (left → right)
     hdrs = [c.strftime("FY%Y") for c in cols]
 
     h = f'<th class="hl">{unit_lbl}</th>' + "".join(f'<th class="hy">{y}</th>' for y in hdrs)
     html = f'<div class="fin-wrap"><table class="fin-table"><thead><tr>{h}</tr></thead><tbody>'
-
-    cs_series = df.loc[cs_row] if cs_on and cs_row and cs_row in df.index else None
 
     for label, tags, is_sub, indent in schema:
         if label not in df.index:
             continue
         row = df.loc[label]
 
-        # Skip empty data rows when hiding
-        if hide_empty and tags and row.dropna().empty:
+        # Always hide empty data rows
+        if tags and row.dropna().empty:
             continue
 
         # Section banner
@@ -1501,19 +1499,12 @@ def _render_table(
         if not tags and indent > 0 and row.dropna().empty:
             continue
 
-        badge = (
-            '<span class="sb sb-sec">SEC</span>'   if src.get(label) == "SEC"      else
-            '<span class="sb sb-yf">YF</span>'     if src.get(label) == "yfinance" else
-            '<span class="sb sb-calc">Calc</span>' if src.get(label) == "calc"     else ""
-        )
-
         row_cls = "rt" if is_sub else f"ri{indent}"
 
-        cells = f'<td class="tl">{label}{badge}</td>'
+        cells = f'<td class="tl">{label}</td>'
         for col in cols:
-            v  = row[col]
-            cb = cs_series[col] if cs_series is not None else None
-            txt, vcls = _fmt(v, label, divisor, cb)
+            v = row[col]
+            txt, vcls = _fmt(v, label, divisor, None)
             cells += f'<td class="{vcls}">{txt}</td>'
         html += f'<tr class="{row_cls}">{cells}</tr>'
 
@@ -1521,10 +1512,10 @@ def _render_table(
         if label in _GROWTH_ROWS and len(cols) >= 2:
             gc = '<td class="tl" style="padding-left:20px;font-style:italic;font-size:10px;">YoY</td>'
             for i, col in enumerate(cols):
-                if i == len(cols) - 1:
+                if i == 0:
                     gc += '<td class="vna">—</td>'
                 else:
-                    txt, vcls = _fmt_yoy(row[col], row[cols[i+1]])
+                    txt, vcls = _fmt_yoy(row[col], row[cols[i-1]])
                     gc += f'<td class="{vcls}" style="font-size:10px;">{txt}</td>'
             html += f'<tr class="ry">{gc}</tr>'
 
@@ -1561,108 +1552,81 @@ def render_financials(ticker: str) -> None:
     _inject_css()
     ticker = ticker.upper()
 
-    st.markdown('<h1 style="font-size:30px;font-weight:800;color:#fff;margin-bottom:6px;">Financials</h1>',
-                unsafe_allow_html=True)
+    # ── Title = ticker symbol ─────────────────────────────────────────────────
+    st.markdown(
+        f'<h1 style="font-size:30px;font-weight:800;color:#fff;margin-bottom:6px;">{ticker}</h1>',
+        unsafe_allow_html=True,
+    )
 
+    # ── Fetch data ────────────────────────────────────────────────────────────
     cik = _cik_map().get(ticker, "")
     with st.spinner(f"Fetching {ticker} from SEC EDGAR…"):
         facts   = _load_facts(cik) if cik else {}
         yf_data = _load_yf(ticker)
 
-    yf_info  = yf_data.get("info", {})
-    name     = yf_info.get("longName") or yf_info.get("shortName") or facts.get("entityName","") or ticker
-    currency = yf_info.get("financialCurrency","USD")
-    has_sec  = bool(facts.get("facts",{}).get("us-gaap"))
-    has_yf   = any(not v.empty for v in [yf_data["is"], yf_data["bs"], yf_data["cf"]])
+    yf_info = yf_data.get("info", {})
+    name    = yf_info.get("longName") or yf_info.get("shortName") or facts.get("entityName","") or ticker
 
-    badges = ""
-    if has_sec:  badges += f'<span class="sb sb-sec" style="font-size:10px;padding:3px 10px;opacity:1;">SEC XBRL — Primary</span> '
-    if has_yf:   badges += f'<span class="sb sb-yf" style="font-size:10px;padding:3px 10px;opacity:1;">yfinance — Fallback</span>'
-    if not has_sec and not has_yf:
-        badges = '<span style="color:#FF3B30;font-size:12px;">⚠ No data available</span>'
-
-    st.markdown(
-        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;">'
-        f'<span style="font-size:20px;font-weight:700;color:#fff;">{name}</span>'
-        f'<span style="color:rgba(255,255,255,.25);">·</span>'
-        f'<span style="color:rgba(255,255,255,.42);font-size:13px;">{ticker}</span>'
-        f'<span style="color:rgba(255,255,255,.25);">·</span>'
-        f'<span style="color:rgba(255,255,255,.42);font-size:13px;">{currency}</span>'
-        f'<span style="color:rgba(255,255,255,.25);">·</span>'
-        f'{badges}</div>', unsafe_allow_html=True)
-
+    # ── Structure warning (REIT / MLP / Insurer / Bank / IFRS) ───────────────
     w = _warn(ticker, name)
     if w:
-        st.markdown(f'<div class="struct-ban">⚠️ {w}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="struct-ban">⚠ {w}</div>', unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns([1.6, 1.6, 1.0, 1.0])
-    with c1:
-        n_yrs = st.select_slider("Years of history", options=[5,6,7,8,9,10], value=10, key=f"fin_n_{ticker}")
-    with c2:
-        unit_opt = st.selectbox("Display unit", ["Actual ($)","Thousands ($K)","Millions ($M)","Billions ($B)"],
-                                index=2, key=f"fin_u_{ticker}")
-    with c3:
-        cs_on  = st.toggle("Common size",      value=False, key=f"fin_cs_{ticker}")
-    with c4:
-        hide_e = st.toggle("Hide empty rows",  value=True,  key=f"fin_he_{ticker}")
-
-    div_map  = {"Actual ($)":1,"Thousands ($K)":1e3,"Millions ($M)":1e6,"Billions ($B)":1e9}
-    lbl_map  = {"Actual ($)":"$","Thousands ($K)":"$K","Millions ($M)":"$M","Billions ($B)":"$B"}
+    # ── Only control: display unit ────────────────────────────────────────────
+    unit_opt = st.selectbox(
+        "Display unit",
+        ["Actual ($)", "Thousands ($K)", "Millions ($M)", "Billions ($B)"],
+        index=2,
+        key=f"fin_u_{ticker}",
+    )
+    div_map  = {"Actual ($)": 1, "Thousands ($K)": 1e3, "Millions ($M)": 1e6, "Billions ($B)": 1e9}
+    lbl_map  = {"Actual ($)": "$", "Thousands ($K)": "$K", "Millions ($M)": "$M", "Billions ($B)": "$B"}
     divisor  = div_map[unit_opt]
     unit_lbl = lbl_map[unit_opt]
 
-    tab_is, tab_bs, tab_cf = st.tabs(["📋  Income Statement","🏦  Balance Sheet","💵  Cash Flow Statement"])
+    N = 5  # fixed 5 fiscal years
+
+    # ── Statement tabs (no emojis) ────────────────────────────────────────────
+    tab_is, tab_bs, tab_cf = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow Statement"])
 
     # ── Income Statement ──────────────────────────────────────────────────────
     with tab_is:
         with st.spinner("Loading…"):
-            is_df, is_src = _build_df(INCOME_SCHEMA, facts, yf_data["is"], _YF_IS, n_yrs)
+            is_df, is_src = _build_df(INCOME_SCHEMA, facts, yf_data["is"], _YF_IS, N)
         _inject_is_computed(is_df, is_src)
         if is_df.empty:
             st.warning(f"No Income Statement data for {ticker}.")
         else:
-            n_av = int(is_df.loc["Revenue"].dropna().shape[0]) if "Revenue" in is_df.index else len(is_df.columns)
-            pc   = UP if n_av >= 8 else (ORANGE if n_av >= 5 else DOWN)
-            st.markdown(f'<span class="hist-pill" style="color:{pc};">● {n_av} fiscal years</span>', unsafe_allow_html=True)
-            st.markdown(_render_table(is_df, INCOME_SCHEMA, is_src, divisor, unit_lbl, cs_on, "Revenue" if cs_on else "", hide_e), unsafe_allow_html=True)
+            st.markdown(_render_table(is_df, INCOME_SCHEMA, is_src, divisor, unit_lbl), unsafe_allow_html=True)
 
     # ── Balance Sheet ─────────────────────────────────────────────────────────
     with tab_bs:
         with st.spinner("Loading…"):
-            bs_df, bs_src = _build_df(BALANCE_SHEET_SCHEMA, facts, yf_data["bs"], _YF_BS, n_yrs)
+            bs_df, bs_src = _build_df(BALANCE_SHEET_SCHEMA, facts, yf_data["bs"], _YF_BS, N)
         _inject_bs_computed(bs_df, bs_src, yf_info)
         if bs_df.empty:
             st.warning(f"No Balance Sheet data for {ticker}.")
         else:
-            n_av = int(bs_df.loc["Total Assets"].dropna().shape[0]) if "Total Assets" in bs_df.index else len(bs_df.columns)
-            pc   = UP if n_av >= 8 else (ORANGE if n_av >= 5 else DOWN)
-            st.markdown(f'<span class="hist-pill" style="color:{pc};">● {n_av} fiscal years</span>', unsafe_allow_html=True)
-            st.markdown(_render_table(bs_df, BALANCE_SHEET_SCHEMA, bs_src, divisor, unit_lbl, cs_on, "Total Assets" if cs_on else "", hide_e), unsafe_allow_html=True)
+            st.markdown(_render_table(bs_df, BALANCE_SHEET_SCHEMA, bs_src, divisor, unit_lbl), unsafe_allow_html=True)
 
     # ── Cash Flow Statement ───────────────────────────────────────────────────
     with tab_cf:
         with st.spinner("Loading…"):
-            cf_df, cf_src = _build_df(CASH_FLOW_SCHEMA, facts, yf_data["cf"], _YF_CF, n_yrs)
+            cf_df, cf_src = _build_df(CASH_FLOW_SCHEMA, facts, yf_data["cf"], _YF_CF, N)
         _inject_cf_computed(cf_df, cf_src, is_df if not is_df.empty else pd.DataFrame())
         if cf_df.empty:
             st.warning(f"No Cash Flow Statement data for {ticker}.")
         else:
-            n_av = int(cf_df.loc["Cash from Operations"].dropna().shape[0]) if "Cash from Operations" in cf_df.index else len(cf_df.columns)
-            pc   = UP if n_av >= 8 else (ORANGE if n_av >= 5 else DOWN)
-            st.markdown(f'<span class="hist-pill" style="color:{pc};">● {n_av} fiscal years</span>', unsafe_allow_html=True)
-            st.markdown(_render_table(cf_df, CASH_FLOW_SCHEMA, cf_src, divisor, unit_lbl, cs_on, "Cash from Operations" if cs_on else "", hide_e), unsafe_allow_html=True)
+            st.markdown(_render_table(cf_df, CASH_FLOW_SCHEMA, cf_src, divisor, unit_lbl), unsafe_allow_html=True)
 
+    # ── Footnote ─────────────────────────────────────────────────────────────
     st.markdown(
         '<div class="fin-note">'
-        '<b style="color:rgba(255,255,255,.45);">Data sources & methodology</b><br>'
-        '<span class="sb sb-sec">SEC</span> Raw XBRL companyfacts (10-K only). '
+        'Source: SEC EDGAR XBRL companyfacts (10-K annual filings). '
         'Latest accession per fiscal-year-end wins — restatements applied automatically. '
-        'Each row queries up to ~10 tag variants in priority order.<br>'
-        '<span class="sb sb-yf">YF</span> yfinance annual statements — fallback only when every XBRL tag returns empty.<br>'
-        '<span class="sb sb-calc">Calc</span> '
-        'EBITDA = EBIT + D&amp;A · FCF = CFO − |CapEx| · FCF Margin = FCF ÷ Revenue · '
-        'FCF/NI = FCF ÷ Net Income · Net Cash = Cash + ST Investments − Debt · '
-        'ETR = Tax ÷ Pre-tax Income.<br>'
-        'Newest year on the left. YoY growth rows beneath key subtotals. '
-        'Toggle <i>Hide empty rows</i> OFF to see every possible line item for any company.</div>',
-        unsafe_allow_html=True)
+        'yfinance used as fallback when XBRL returns no data. '
+        'EBITDA = EBIT + D&amp;A · FCF = CFO − |CapEx| · '
+        'FCF Margin = FCF ÷ Revenue · Net Cash = Cash + ST Investments − Debt.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
