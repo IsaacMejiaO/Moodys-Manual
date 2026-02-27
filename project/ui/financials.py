@@ -5,33 +5,29 @@ Financials Page — SEC XBRL Primary, Exact 10-K Presentation
 
 Architecture
 ------------
-1. PRIMARY: Fetch raw XBRL companyfacts from SEC EDGAR. Extract every
-   annual (10-K) filing for each concept. Deduplicate by accession number
-   (latest amendment wins). Present statements in the same section / line
-   order that companies use in their actual 10-K filings.
+PRIMARY:  Raw XBRL companyfacts from SEC EDGAR. Only 10-K annual entries.
+          Latest accession number per fiscal-year-end wins (restatements auto-applied).
+          Tags listed in the exact priority order companies most commonly file them.
 
-2. FALLBACK: yfinance annual DataFrames fill any gap where an XBRL tag
-   returns no data (sparse filers, recent IPOs, IFRS filers).
+FALLBACK: yfinance fills any row where every XBRL tag returns empty.
 
-3. COMPUTED: EBITDA = EBIT + D&A when not filed. FCF = CFO − |CapEx|.
-   FCF Margin = FCF / Revenue. All computed values are badged visibly.
+COMPUTED: EBITDA, FCF, margins, effective tax rate — all clearly badged.
 
-Design principles
------------------
-- The XBRL tag priority lists mirror the order SEC filers actually use,
-  sourced from the EDGAR GAAP taxonomy. More specific / dominant tags first.
-- Statements display newest-year-left so analysts scan left-to-right
-  for the most recent period, exactly like Bloomberg / CapIQ.
-- YoY % growth sub-rows appear below every key subtotal automatically.
-- Source provenance (SEC / yfinance / Computed) is shown per row.
-- Special-structure banners (REIT / MLP / Insurer / IFRS) inform the user
-  when a standard IS/BS/CF layout does not fully apply.
-- Unit scaler (Actual / K / M / B) and common-size toggle ship out of the box.
-- "Hide empty rows" collapses any all-NaN line to keep the table dense.
+Key design decisions
+--------------------
+- Each schema row lists ALL known XBRL tags for that concept, not just one or two.
+  This is the primary fix vs. the prior version: the previous schema had ~3-5 tags
+  per row; companies routinely file under 10-20 different tag names for the same
+  concept depending on filing year, industry, and preparer conventions.
+- Tags are ordered: most common / specific first, broad fallbacks last.
+- "Hide empty rows" (default ON) collapses lines with no data so the table
+  stays tight. Turn it OFF to see every possible line item for any company.
+- Newest year on the left (Bloomberg / CapIQ convention).
+- YoY growth sub-rows beneath every key subtotal.
+- Source badge (SEC / YF / Calc) on every row.
 """
 
 from __future__ import annotations
-
 import warnings
 from typing import Dict, List, Optional, Tuple
 
@@ -45,682 +41,1194 @@ from sec_engine.cik_loader import load_full_cik_map
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# ── Design tokens ─────────────────────────────────────────────────────────────
-UP      = "#00C805"
-DOWN    = "#FF3B30"
-BLUE    = "#0A7CFF"
-ORANGE  = "#FF9F0A"
+UP     = "#00C805"
+DOWN   = "#FF3B30"
+BLUE   = "#0A7CFF"
+ORANGE = "#FF9F0A"
 
-# ── Special-structure sets ────────────────────────────────────────────────────
+# ── Special-structure entity sets ─────────────────────────────────────────────
 _REITS = {
     "SPG","EXR","VICI","PSA","EQIX","OHI","GLPI","HST","FRT","EGP",
     "FR","NNN","CTRE","AMT","CCI","SBAC","DLR","O","PLD","WPC","STAG",
     "COLD","CUBE","NSA","REXR","TRNO","ELS","UDR","VTR","PEAK","IIPR",
 }
-_MLPS = {
-    "OKE","WES","HESM","AM","EPD","MMP","PAA","TRGP","KMI","ET","ENB",
-    "DCP","MPLX","CEQP","BPL",
-}
-_INSURERS = {
-    "PGR","ALL","CINF","ERIE","KNSL","CB","AIG","MET","PRU","TRV",
-    "HIG","AFG","RLI","ACGL","RNR",
-}
-_BANKS = {
-    "JPM","BAC","WFC","C","GS","MS","USB","PNC","TFC","COF",
-    "KEY","RF","FITB","HBAN","ZION","CMA","NTRS","STT","BK",
-}
-_IFRS_FILERS = {
-    "BAM","NVO","ASML","TSM","TM","HMC","SONY","UL","BP","SHEL",
-    "RIO","BHP","SAP","BABA","JD","PDD","SE","GRAB",
-}
+_MLPS     = {"OKE","WES","HESM","AM","EPD","MMP","PAA","TRGP","KMI","ET","ENB","DCP","MPLX","CEQP"}
+_INSURERS = {"PGR","ALL","CINF","ERIE","KNSL","CB","AIG","MET","PRU","TRV","HIG","AFG","RLI","ACGL","RNR"}
+_BANKS    = {"JPM","BAC","WFC","C","GS","MS","USB","PNC","TFC","COF","KEY","RF","FITB","HBAN","ZION","CMA","NTRS","STT","BK"}
+_IFRS     = {"BAM","NVO","ASML","TSM","TM","HMC","SONY","UL","BP","SHEL","RIO","BHP","SAP","BABA","JD","PDD","SE"}
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STATEMENT SCHEMAS
-# Each row: (display_label, [xbrl_tags_priority_order], is_subtotal, indent_level)
+# SCHEMA FORMAT
+# (display_label, [xbrl_tags…], is_subtotal, indent)
 #
-# indent_level:
-#   0 = section banner (dark band, no values)
-#   1 = top-level line item
-#   2 = sub-line (greyed, indented)
-#   3 = sub-sub-line
-#
-# Empty tag list  →  either section header (indent=0) or computed row (indent>0).
-# is_subtotal     →  bold + separator lines above & below.
+# indent 0  = section banner (dark band, no values — empty tag list required)
+# indent 1  = top-level line
+# indent 2  = sub-line
+# indent 3  = sub-sub-line
+# is_subtotal = bold, separator borders
+# empty tags + indent>0 = computed row (filled programmatically later)
 # ══════════════════════════════════════════════════════════════════════════════
 
 INCOME_SCHEMA: List[Tuple] = [
-    # ── Revenue ───────────────────────────────────────────────────────────────
-    ("Revenue",
-     ["Revenues",
-      "RevenueFromContractWithCustomerExcludingAssessedTax",
-      "RevenueFromContractWithCustomerIncludingAssessedTax",
-      "SalesRevenueNet",
-      "RevenuesNetOfInterestExpense",
-      "SalesRevenueGoodsNet"],
-     True, 1),
-    ("  Product Revenue",
-     ["SalesRevenueGoodsNet",
-      "RevenueFromContractWithCustomerExcludingAssessedTaxProduct"],
-     False, 2),
-    ("  Service Revenue",
-     ["SalesRevenueServicesNet",
-      "RevenueFromContractWithCustomerExcludingAssessedTaxService"],
-     False, 2),
-    ("  Other Revenue",
-     ["OtherRevenues","OtherOperatingIncome"],
-     False, 2),
 
-    # ── Cost of Revenue ───────────────────────────────────────────────────────
-    ("Cost of Revenue",
-     ["CostOfRevenue",
-      "CostOfGoodsAndServicesSold",
-      "CostOfGoodsSold",
-      "CostOfServices"],
-     False, 1),
-    ("  Cost of Products",
-     ["CostOfGoodsSold",
-      "CostOfGoodsAndServicesSoldCostOfProducts"],
-     False, 2),
-    ("  Cost of Services",
-     ["CostOfServices",
-      "CostOfGoodsAndServicesSoldCostOfServices"],
-     False, 2),
+    # ── REVENUE ───────────────────────────────────────────────────────────────
+    ("Revenue", [
+        # Current ASC 606 tags (most companies post-2018)
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "RevenueFromContractWithCustomerIncludingAssessedTax",
+        # Legacy / broad tags
+        "Revenues",
+        "SalesRevenueNet",
+        "RevenuesNetOfInterestExpense",
+        "SalesRevenueGoodsNet",
+        "SalesRevenueServicesNet",
+        # Industry-specific totals
+        "LicenseAndServiceRevenue",
+        "ContractRevenue",
+        "HealthCareOrganizationRevenue",
+        "RealEstateRevenueNet",
+        "OilAndGasRevenue",
+        "UtilityRevenue",
+        "TelecommunicationsRevenue",
+    ], True, 1),
 
-    ("Gross Profit",
-     ["GrossProfit","GrossProfitLoss"],
-     True, 1),
+    ("  Product Revenue", [
+        "RevenueFromContractWithCustomerExcludingAssessedTaxProduct",
+        "SalesRevenueGoodsNet",
+        "ProductRevenue",
+        "NetProductRevenue",
+        "GoodsAndProductsRevenue",
+    ], False, 2),
 
-    # ── Operating Expenses ────────────────────────────────────────────────────
-    ("  Research & Development",
-     ["ResearchAndDevelopmentExpense",
-      "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost"],
-     False, 2),
-    ("  Sales & Marketing",
-     ["SellingAndMarketingExpense","MarketingExpense"],
-     False, 2),
-    ("  General & Administrative",
-     ["GeneralAndAdministrativeExpense"],
-     False, 2),
-    ("  SG&A",
-     ["SellingGeneralAndAdministrativeExpense"],
-     False, 2),
-    ("  Amortization of Intangibles",
-     ["AmortizationOfIntangibleAssets",
-      "AmortizationOfAcquiredIntangibleAssets"],
-     False, 2),
-    ("  Restructuring & Impairment",
-     ["RestructuringCharges",
-      "RestructuringAndRelatedCostIncurredCost",
-      "GoodwillImpairmentLoss"],
-     False, 2),
-    ("  Other Operating Expense / (Income)",
-     ["OtherOperatingIncomeExpenseNet",
-      "OtherCostAndExpenseOperating"],
-     False, 2),
-    ("Total Operating Expenses",
-     ["OperatingExpenses","CostsAndExpenses"],
-     False, 1),
+    ("  Service Revenue", [
+        "RevenueFromContractWithCustomerExcludingAssessedTaxService",
+        "SalesRevenueServicesNet",
+        "ServiceRevenue",
+        "SubscriptionRevenue",
+        "MaintenanceRevenue",
+        "SupportAndMaintenanceRevenue",
+    ], False, 2),
 
-    ("Operating Income (EBIT)",
-     ["OperatingIncomeLoss","OperatingIncome"],
-     True, 1),
+    ("  Subscription Revenue", [
+        "SubscriptionRevenue",
+        "RevenueFromContractWithCustomerExcludingAssessedTaxSubscription",
+    ], False, 2),
 
-    # ── Below Operating Line ──────────────────────────────────────────────────
-    ("  Interest Expense",
-     ["InterestExpense","InterestAndDebtExpense","InterestExpenseDebt"],
-     False, 2),
-    ("  Interest & Other Income",
-     ["InterestAndDividendIncomeOperating",
-      "InvestmentIncomeInterest",
-      "InterestIncomeExpenseNet",
-      "NonoperatingIncomeExpense",
-      "OtherNonoperatingIncomeExpense"],
-     False, 2),
-    ("  Equity Method Investments",
-     ["IncomeLossFromEquityMethodInvestments"],
-     False, 2),
+    ("  License / Technology Revenue", [
+        "LicenseRevenue",
+        "LicenseAndServiceRevenue",
+        "TechnologyAndLicensingRevenue",
+        "RoyaltyRevenue",
+        "LicensingRevenue",
+        "SoftwareLicenseRevenue",
+    ], False, 2),
 
-    ("Income Before Tax",
-     ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-      "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
-     True, 1),
-    ("  Income Tax Expense / (Benefit)",
-     ["IncomeTaxExpenseBenefit"],
-     False, 2),
-    ("  Effective Tax Rate (%)",       [], False, 2),   # computed
+    ("  Advertising Revenue", [
+        "AdvertisingRevenue",
+        "OnlineAdvertisingRevenue",
+        "DigitalAdvertisingRevenue",
+    ], False, 2),
 
-    ("Net Income (Cont. Operations)",
-     ["IncomeLossFromContinuingOperations",
-      "IncomeLossFromContinuingOperationsIncludingPortionAttributableToNoncontrollingInterest"],
-     False, 1),
-    ("  Disc. Operations",
-     ["IncomeLossFromDiscontinuedOperationsNetOfTax"],
-     False, 2),
+    ("  Hardware / Device Revenue", [
+        "HardwareRevenue",
+        "DeviceRevenue",
+    ], False, 2),
 
-    ("Net Income",
-     ["NetIncomeLoss",
-      "ProfitLoss",
-      "NetIncomeLossAvailableToCommonStockholdersBasic"],
-     True, 1),
-    ("  Attributable to NCI",
-     ["NetIncomeLossAttributableToNoncontrollingInterest"],
-     False, 2),
-    ("  Attributable to Common",
-     ["NetIncomeLossAvailableToCommonStockholdersBasic"],
-     False, 2),
+    ("  Related-Party Revenue", [
+        "RevenueFromRelatedParties",
+        "RelatedPartyRevenue",
+    ], False, 2),
 
-    # ── Per Share ─────────────────────────────────────────────────────────────
-    ("PER SHARE",                      [], False, 0),
-    ("EPS — Basic",                    ["EarningsPerShareBasic"],       False, 1),
-    ("EPS — Diluted",                  ["EarningsPerShareDiluted"],     False, 1),
-    ("Shares (Basic, M)",              ["WeightedAverageNumberOfSharesOutstandingBasic"],       False, 1),
-    ("Shares (Diluted, M)",            ["WeightedAverageNumberOfDilutedSharesOutstanding"],     False, 1),
+    ("  Other Revenue", [
+        "OtherRevenues",
+        "OtherRevenue",
+        "OtherSalesRevenue",
+    ], False, 2),
 
-    # ── Supplemental ─────────────────────────────────────────────────────────
-    ("SUPPLEMENTAL",                   [], False, 0),
-    ("EBITDA",                         [],   True, 1),   # computed
-    ("  D&A",
-     ["DepreciationAndAmortization",
-      "DepreciationDepletionAndAmortization",
-      "Depreciation"],
-     False, 2),
-    ("  Stock-Based Compensation",
-     ["ShareBasedCompensation",
-      "AllocatedShareBasedCompensationExpense"],
-     False, 2),
+    # ── COST OF REVENUE ───────────────────────────────────────────────────────
+    ("Cost of Revenue", [
+        "CostOfRevenue",
+        "CostOfGoodsAndServicesSold",
+        "CostOfGoodsSold",
+        "CostOfServices",
+        "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
+        "CostOfRevenueExcludingDepreciationAndAmortization",
+        "CostOfSales",
+    ], False, 1),
+
+    ("  Cost of Products", [
+        "CostOfGoodsSold",
+        "CostOfGoodsAndServicesSoldCostOfProducts",
+        "CostOfProductRevenue",
+        "CostOfMerchandiseSoldAndOccupancyCosts",
+    ], False, 2),
+
+    ("  Cost of Services", [
+        "CostOfServices",
+        "CostOfGoodsAndServicesSoldCostOfServices",
+        "CostOfServiceRevenue",
+        "CostOfSubscriptionRevenue",
+        "CostOfMaintenanceRevenue",
+    ], False, 2),
+
+    ("  D&A in Cost of Revenue", [
+        "CostOfGoodsAndServicesSoldDepreciationAndAmortization",
+        "CostOfRevenueDepreciationAndAmortization",
+    ], False, 2),
+
+    ("  Depletion & Exploration (E&P)", [
+        "DepletionOfOilAndGasProperties",
+        "ExplorationExpense",
+        "OilAndGasProductionExpense",
+    ], False, 2),
+
+    ("Gross Profit", [
+        "GrossProfit",
+        "GrossProfitLoss",
+    ], True, 1),
+
+    # ── OPERATING EXPENSES ────────────────────────────────────────────────────
+    ("  Research & Development", [
+        "ResearchAndDevelopmentExpense",
+        "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
+        "TechnologyAndDevelopmentExpense",
+        "ProductDevelopmentAndEngineeringExpense",
+        "ResearchAndDevelopmentExpenseMember",
+        "InProcessResearchAndDevelopmentExpense",
+    ], False, 2),
+
+    ("  Sales & Marketing", [
+        "SellingAndMarketingExpense",
+        "MarketingExpense",
+        "SellingExpense",
+        "AdvertisingExpense",
+        "SalesAndMarketingExpense",
+    ], False, 2),
+
+    ("  General & Administrative", [
+        "GeneralAndAdministrativeExpense",
+        "GeneralAndAdministrativeExpenseExcludingDepreciation",
+    ], False, 2),
+
+    ("  SG&A (Combined)", [
+        "SellingGeneralAndAdministrativeExpense",
+        "SellingGeneralAndAdministrativeExpenseExcludingDepreciation",
+    ], False, 2),
+
+    ("  Labor & Related", [
+        "LaborAndRelatedExpense",
+        "EmployeeBenefitsAndShareBasedCompensation",
+        "SalariesAndWages",
+        "EmployeeBenefitsExpense",
+    ], False, 2),
+
+    ("  IT & Communications", [
+        "InformationTechnologyAndDataProcessingExpense",
+        "CommunicationsAndInformationTechnology",
+        "TechnologyExpense",
+    ], False, 2),
+
+    ("  Amortization of Intangibles", [
+        "AmortizationOfIntangibleAssets",
+        "AmortizationOfAcquiredIntangibleAssets",
+        "BusinessAcquisitionCostOfAcquiredEntityAmortizationOfIntangibles",
+        "AmortizationOfDeferredSalesCommissions",
+        "AmortizationOfCapitalizedCostsToObtainContracts",
+    ], False, 2),
+
+    ("  Lease / ROU Amortization", [
+        "OperatingLeaseRightOfUseAssetAmortizationExpense",
+        "FinanceLeaseRightOfUseAssetAmortization",
+        "OperatingLeaseCost",
+    ], False, 2),
+
+    ("  Impairment", [
+        "GoodwillImpairmentLoss",
+        "ImpairmentOfIntangibleAssetsExcludingGoodwill",
+        "ImpairmentOfLongLivedAssetsHeldForUse",
+        "AssetImpairmentCharges",
+        "ImpairmentCharges",
+        "GoodwillAndIntangibleAssetImpairment",
+        "TangibleAssetImpairmentCharges",
+    ], False, 2),
+
+    ("  Restructuring Charges", [
+        "RestructuringCharges",
+        "RestructuringAndRelatedCostIncurredCost",
+        "RestructuringSettlementAndImpairmentProvisions",
+        "RestructuringCostsAndAssetImpairmentCharges",
+    ], False, 2),
+
+    ("  Acquisition / Integration Costs", [
+        "BusinessCombinationAcquisitionRelatedCosts",
+        "AcquisitionRelatedCosts",
+        "MergerRelatedCosts",
+        "BusinessCombinationIntegrationRelatedCosts",
+    ], False, 2),
+
+    ("  Litigation & Settlements", [
+        "LitigationSettlementExpense",
+        "LitigationExpense",
+        "LossContingencyAccrualProvision",
+    ], False, 2),
+
+    ("  Other Operating Expense / (Income)", [
+        "OtherOperatingIncomeExpenseNet",
+        "OtherCostAndExpenseOperating",
+        "OtherExpenses",
+        "OtherOperatingExpenses",
+        "OtherOperatingCosts",
+    ], False, 2),
+
+    ("Total Operating Expenses", [
+        "OperatingExpenses",
+        "CostsAndExpenses",
+        "OperatingCostsAndExpenses",
+    ], False, 1),
+
+    ("Operating Income (EBIT)", [
+        "OperatingIncomeLoss",
+        "OperatingIncome",
+        "IncomeLossFromContinuingOperationsBeforeInterestExpenseInterestIncomeIncomeTaxesExtraordinaryItemsNoncontrollingInterestsNet",
+    ], True, 1),
+
+    # ── BELOW OPERATING LINE ──────────────────────────────────────────────────
+    ("  Interest Expense", [
+        "InterestExpense",
+        "InterestAndDebtExpense",
+        "InterestExpenseDebt",
+        "InterestExpenseRelatedParty",
+        "InterestExpenseOther",
+        "FinanceLeaseInterestExpense",
+    ], False, 2),
+
+    ("  Interest Income", [
+        "InterestIncomeOperating",
+        "InvestmentIncomeInterest",
+        "InterestAndDividendIncomeOperating",
+        "InterestAndDividendIncomeSecurities",
+    ], False, 2),
+
+    ("  Other Non-Operating Income / (Expense)", [
+        "OtherNonoperatingIncomeExpense",
+        "NonoperatingIncomeExpense",
+        "OtherNonoperatingIncome",
+        "OtherNonoperatingExpense",
+        "InterestAndOtherIncome",
+        "OtherIncomeLoss",
+    ], False, 2),
+
+    ("  FX Gain / (Loss)", [
+        "ForeignCurrencyTransactionGainLossBeforeTax",
+        "ForeignCurrencyTransactionGainLossRealized",
+        "ForeignCurrencyTransactionGainLossUnrealized",
+        "GainLossOnForeignCurrencyDerivativeInstrumentsNotDesignatedAsHedgingInstruments",
+    ], False, 2),
+
+    ("  Gain / (Loss) on Investments", [
+        "GainLossOnInvestments",
+        "GainLossOnSaleOfInvestments",
+        "GainLossOnSaleOfBusiness",
+        "GainLossOnDispositionOfAssets",
+        "GainLossOnSaleOfPropertyPlantEquipment",
+        "EquitySecuritiesFvNiUnrealizedGainLoss",
+        "GainLossOnDerivativeInstrumentsNetPretax",
+    ], False, 2),
+
+    ("  Equity Method Investment Income / (Loss)", [
+        "IncomeLossFromEquityMethodInvestments",
+        "IncomeLossFromEquityMethodInvestmentsNetOfDividendsOrDistributions",
+    ], False, 2),
+
+    ("Income Before Tax", [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",  # rare but used
+        "IncomeLossBeforeIncomeTaxes",
+    ], True, 1),
+
+    ("  Income Tax Expense / (Benefit)", [
+        "IncomeTaxExpenseBenefit",
+        "IncomeTaxesPaidNet",
+        "CurrentIncomeTaxExpenseBenefit",
+    ], False, 2),
+
+    ("  Effective Tax Rate (%)", [], False, 2),  # computed
+
+    ("Net Income from Cont. Operations", [
+        "IncomeLossFromContinuingOperations",
+        "IncomeLossFromContinuingOperationsIncludingPortionAttributableToNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeExtraordinaryItemsAndCumulativeEffectOfAccountingChanges",
+    ], False, 1),
+
+    ("  Discontinued Operations", [
+        "IncomeLossFromDiscontinuedOperationsNetOfTax",
+        "IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity",
+        "DiscontinuedOperationIncomeLossFromDiscontinuedOperationDuringPhaseOutPeriodNetOfTax",
+    ], False, 2),
+
+    ("Net Income", [
+        "NetIncomeLoss",
+        "ProfitLoss",
+        "NetIncomeLossAvailableToCommonStockholdersBasic",
+        "NetIncomeLossIncludingPortionAttributableToNonredeemableNoncontrollingInterest",
+    ], True, 1),
+
+    ("  Attributable to Noncontrolling Interests", [
+        "NetIncomeLossAttributableToNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsAttributableToNoncontrollingEntity",
+        "MinorityInterestInNetIncomeLossOtherMinorityInterests",
+    ], False, 2),
+
+    ("  Attributable to Common Stockholders", [
+        "NetIncomeLossAvailableToCommonStockholdersBasic",
+        "NetIncomeLossAvailableToCommonStockholdersDiluted",
+    ], False, 2),
+
+    ("  Preferred Dividends", [
+        "PreferredStockDividendsAndOtherAdjustments",
+        "DividendsPreferredStock",
+        "DividendsPreferredStockCash",
+    ], False, 2),
+
+    # ── PER SHARE ─────────────────────────────────────────────────────────────
+    ("PER SHARE", [], False, 0),
+
+    ("EPS — Basic", [
+        "EarningsPerShareBasic",
+        "IncomeLossFromContinuingOperationsPerBasicShare",
+    ], False, 1),
+
+    ("EPS — Diluted", [
+        "EarningsPerShareDiluted",
+        "IncomeLossFromContinuingOperationsPerDilutedShare",
+        "EarningsPerShareBasicAndDiluted",
+    ], False, 1),
+
+    ("Shares Outstanding — Basic (M)", [
+        "WeightedAverageNumberOfSharesOutstandingBasic",
+        "CommonStockSharesOutstanding",
+    ], False, 1),
+
+    ("Shares Outstanding — Diluted (M)", [
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "WeightedAverageNumberOfSharesOutstandingDiluted",
+    ], False, 1),
+
+    # ── SUPPLEMENTAL ─────────────────────────────────────────────────────────
+    ("SUPPLEMENTAL", [], False, 0),
+
+    ("EBITDA", [], True, 1),  # computed: EBIT + D&A
+
+    ("  Depreciation & Amortization", [
+        "DepreciationAndAmortization",
+        "DepreciationDepletionAndAmortization",
+        "Depreciation",
+        "DepreciationAmortizationAndAccretionNet",
+        "DepreciationNonproduction",
+    ], False, 2),
+
+    ("  Stock-Based Compensation", [
+        "ShareBasedCompensation",
+        "AllocatedShareBasedCompensationExpense",
+        "ShareBasedCompensationExpense",
+        "EmployeeBenefitsAndShareBasedCompensation",
+    ], False, 2),
+
+    ("  Capital Expenditures (IS context)", [
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsToAcquireProductiveAssets",
+        "CapitalExpenditures",
+    ], False, 2),
 ]
 
 BALANCE_SHEET_SCHEMA: List[Tuple] = [
+
     # ══ ASSETS ════════════════════════════════════════════════════════════════
-    ("ASSETS",                          [], False, 0),
-    ("CURRENT ASSETS",                  [], False, 0),
-    ("  Cash & Cash Equivalents",
-     ["CashAndCashEquivalentsAtCarryingValue",
-      "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
-      "Cash"],
-     False, 2),
-    ("  Short-Term Investments",
-     ["ShortTermInvestments",
-      "AvailableForSaleSecuritiesCurrent",
-      "MarketableSecuritiesCurrent"],
-     False, 2),
-    ("  Accounts Receivable, Net",
-     ["AccountsReceivableNetCurrent",
-      "ReceivablesNetCurrent"],
-     False, 2),
-    ("  Inventory",
-     ["InventoryNet",
-      "InventoryFinishedGoodsNetOfReserves",
-      "InventoryGross"],
-     False, 2),
-    ("  Prepaid Expenses & Other",
-     ["PrepaidExpenseAndOtherAssetsCurrent",
-      "PrepaidExpenseCurrent",
-      "OtherAssetsCurrent"],
-     False, 2),
-    ("Total Current Assets",           ["AssetsCurrent"],               True, 1),
+    ("ASSETS", [], False, 0),
+    ("CURRENT ASSETS", [], False, 0),
 
-    ("NON-CURRENT ASSETS",             [], False, 0),
-    ("  PP&E, Net",
-     ["PropertyPlantAndEquipmentNet",
-      "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization"],
-     False, 2),
-    ("  Operating Lease ROU Assets",   ["OperatingLeaseRightOfUseAsset"], False, 2),
-    ("  Goodwill",                     ["Goodwill"],                    False, 2),
-    ("  Intangible Assets, Net",
-     ["FiniteLivedIntangibleAssetsNet",
-      "IntangibleAssetsNetExcludingGoodwill"],
-     False, 2),
-    ("  Long-Term Investments",
-     ["LongTermInvestments",
-      "AvailableForSaleSecuritiesNoncurrent",
-      "EquityMethodInvestments",
-      "MarketableSecuritiesNoncurrent"],
-     False, 2),
-    ("  Deferred Tax Assets (LT)",
-     ["DeferredIncomeTaxAssetsNet"],
-     False, 2),
-    ("  Other Non-Current Assets",     ["OtherAssetsNoncurrent"],       False, 2),
+    ("  Cash & Cash Equivalents", [
+        "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+        "CashAndCashEquivalentsAndShortTermInvestments",
+        "Cash",
+        "CashAndDueFromBanks",
+    ], False, 2),
 
-    ("Total Assets",                   ["Assets"],                      True, 1),
+    ("  Restricted Cash (Current)", [
+        "RestrictedCashAndCashEquivalentsCurrent",
+        "RestrictedCashCurrent",
+    ], False, 2),
+
+    ("  Short-Term Investments", [
+        "ShortTermInvestments",
+        "AvailableForSaleSecuritiesCurrent",
+        "MarketableSecuritiesCurrent",
+        "DebtSecuritiesAvailableForSaleCurrent",
+        "TradingSecuritiesCurrent",
+        "ShortTermBankLoansAndNotesPayable",
+    ], False, 2),
+
+    ("  Accounts Receivable, Net", [
+        "AccountsReceivableNetCurrent",
+        "ReceivablesNetCurrent",
+        "AccountsAndOtherReceivablesNetCurrent",
+        "AccountsReceivableBilledForLongTermContractsOrProgramsNet",
+        "TradeAndOtherAccountsReceivableNet",
+    ], False, 2),
+
+    ("  Unbilled Receivables", [
+        "UnbilledReceivablesCurrent",
+        "ContractWithCustomerAssetNetCurrent",
+        "UnbilledContractsReceivable",
+        "ReceivablesLongTermContractsOrPrograms",
+    ], False, 2),
+
+    ("  Notes Receivable (Current)", [
+        "NotesReceivableNetCurrent",
+        "NotesAndLoansReceivableNetCurrent",
+    ], False, 2),
+
+    ("  Inventory", [
+        "InventoryNet",
+        "InventoryFinishedGoodsNetOfReserves",
+        "InventoryGross",
+        "InventoryRawMaterialsNetOfReserves",
+        "InventoryWorkInProcessNetOfReserves",
+        "InventoryFinishedGoods",
+        "RetailRelatedInventoryMerchandise",
+    ], False, 2),
+
+    ("  Income Tax Receivable", [
+        "IncomeTaxesReceivable",
+        "IncomeTaxReceivable",
+        "TaxesReceivable",
+    ], False, 2),
+
+    ("  Prepaid Expenses & Other Current Assets", [
+        "PrepaidExpenseAndOtherAssetsCurrent",
+        "PrepaidExpenseCurrent",
+        "OtherAssetsCurrent",
+        "OtherCurrentAssets",
+        "DeferredCostsCurrent",
+    ], False, 2),
+
+    ("  Derivative Assets (Current)", [
+        "DerivativeAssetsCurrent",
+        "DerivativeFairValueOfDerivativeAsset",
+    ], False, 2),
+
+    ("Total Current Assets", ["AssetsCurrent"], True, 1),
+
+    # ── NON-CURRENT ASSETS ────────────────────────────────────────────────────
+    ("NON-CURRENT ASSETS", [], False, 0),
+
+    ("  PP&E, Net", [
+        "PropertyPlantAndEquipmentNet",
+        "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization",
+        "PropertyPlantAndEquipmentNetIncludingCapitalLeases",
+    ], False, 2),
+
+    ("  Operating Lease ROU Assets", [
+        "OperatingLeaseRightOfUseAsset",
+        "OperatingLeaseRightOfUseAssetBeforeAccumulatedAmortization",
+    ], False, 2),
+
+    ("  Finance Lease ROU Assets", [
+        "FinanceLeaseRightOfUseAsset",
+        "FinanceLeaseRightOfUseAssetAfterAccumulatedAmortization",
+    ], False, 2),
+
+    ("  Goodwill", ["Goodwill", "GoodwillGross"], False, 2),
+
+    ("  Intangible Assets, Net", [
+        "FiniteLivedIntangibleAssetsNet",
+        "IntangibleAssetsNetExcludingGoodwill",
+        "IntangibleAssetsNetIncludingGoodwill",
+        "IndefiniteLivedIntangibleAssetsExcludingGoodwill",
+        "InfinitelivedIntangibleAssetsNet",
+    ], False, 2),
+
+    ("  Long-Term Investments & Securities", [
+        "LongTermInvestments",
+        "AvailableForSaleSecuritiesNoncurrent",
+        "EquityMethodInvestments",
+        "MarketableSecuritiesNoncurrent",
+        "DebtSecuritiesAvailableForSaleNoncurrent",
+        "EquitySecuritiesFvNi",
+        "InvestmentsInAffiliatesSubsidiariesAssociatesAndJointVentures",
+    ], False, 2),
+
+    ("  Capitalized Contract Costs", [
+        "CapitalizedContractCostNet",
+        "CapitalizedContractCostNetNoncurrent",
+        "DeferredCommissions",
+        "DeferredContractAcquisitionCostsNetNoncurrent",
+    ], False, 2),
+
+    ("  Deferred Tax Assets (LT)", [
+        "DeferredIncomeTaxAssetsNet",
+        "DeferredTaxAssetsLiabilitiesNet",
+        "DeferredTaxAssetsGross",
+    ], False, 2),
+
+    ("  Restricted Cash (LT)", [
+        "RestrictedCashAndCashEquivalentsNoncurrent",
+        "RestrictedCashNoncurrent",
+        "RestrictedInvestmentsNoncurrent",
+    ], False, 2),
+
+    ("  Other Non-Current Assets", [
+        "OtherAssetsNoncurrent",
+        "OtherNoncurrentAssets",
+    ], False, 2),
+
+    ("Total Assets", ["Assets"], True, 1),
 
     # ══ LIABILITIES ════════════════════════════════════════════════════════════
-    ("LIABILITIES",                    [], False, 0),
-    ("CURRENT LIABILITIES",            [], False, 0),
-    ("  Accounts Payable",
-     ["AccountsPayableCurrent",
-      "AccountsPayableAndAccruedLiabilitiesCurrent"],
-     False, 2),
-    ("  Accrued Liabilities",
-     ["AccruedLiabilitiesCurrent",
-      "EmployeeRelatedLiabilitiesCurrent",
-      "OtherAccruedLiabilitiesCurrent"],
-     False, 2),
-    ("  Deferred Revenue (Current)",
-     ["DeferredRevenueCurrent",
-      "ContractWithCustomerLiabilityCurrent"],
-     False, 2),
-    ("  Short-Term Debt",
-     ["ShortTermBorrowings",
-      "CommercialPaper",
-      "NotesPayableCurrent",
-      "DebtCurrent"],
-     False, 2),
-    ("  Current Portion of LT Debt",
-     ["LongTermDebtCurrent",
-      "LongTermDebtAndCapitalLeaseObligationsCurrent"],
-     False, 2),
-    ("  Operating Lease Liability (Current)",
-     ["OperatingLeaseLiabilityCurrent"],
-     False, 2),
-    ("  Other Current Liabilities",    ["OtherLiabilitiesCurrent"],    False, 2),
+    ("LIABILITIES", [], False, 0),
+    ("CURRENT LIABILITIES", [], False, 0),
 
-    ("Total Current Liabilities",      ["LiabilitiesCurrent"],         True, 1),
+    ("  Accounts Payable", [
+        "AccountsPayableCurrent",
+        "AccountsPayableAndAccruedLiabilitiesCurrent",
+        "AccountsPayableRelatedPartiesCurrent",
+        "TradeAccountsPayable",
+    ], False, 2),
 
-    ("NON-CURRENT LIABILITIES",        [], False, 0),
-    ("  Long-Term Debt",
-     ["LongTermDebtNoncurrent",
-      "LongTermDebt",
-      "LongTermDebtAndCapitalLeaseObligations",
-      "LongTermDebtAndFinanceLeaseObligations"],
-     False, 2),
-    ("  Operating Lease Liability (LT)",
-     ["OperatingLeaseLiabilityNoncurrent"],
-     False, 2),
-    ("  Deferred Revenue (LT)",
-     ["DeferredRevenueNoncurrent",
-      "ContractWithCustomerLiabilityNoncurrent"],
-     False, 2),
-    ("  Deferred Tax Liabilities",
-     ["DeferredIncomeTaxLiabilitiesNet"],
-     False, 2),
-    ("  Other Non-Current Liabilities",["OtherLiabilitiesNoncurrent"], False, 2),
+    ("  Accrued Compensation & Benefits", [
+        "EmployeeRelatedLiabilitiesCurrent",
+        "AccruedEmployeeBenefitsCurrent",
+        "AccruedLiabilitiesForCommissionsExpenseAndTaxes",
+        "WorkersCompensationLiabilityCurrent",
+    ], False, 2),
 
-    ("Total Liabilities",              ["Liabilities"],                 True, 1),
+    ("  Accrued Expenses & Other Current Liabilities", [
+        "AccruedLiabilitiesCurrent",
+        "OtherAccruedLiabilitiesCurrent",
+        "AccruedExpensesAndOtherCurrentLiabilities",
+        "AccountsPayableAndOtherAccruedLiabilities",
+        "OtherLiabilitiesAndAccruedLiabilitiesCurrent",
+    ], False, 2),
+
+    ("  Deferred Revenue (Current)", [
+        "DeferredRevenueCurrent",
+        "ContractWithCustomerLiabilityCurrent",
+        "DeferredRevenueAndCreditsNoncurrent",
+        "CustomerDepositsAndDeferredRevenueCurrent",
+    ], False, 2),
+
+    ("  Income Taxes Payable", [
+        "AccruedIncomeTaxesCurrent",
+        "TaxesPayableCurrent",
+        "IncomeTaxesPayableCurrent",
+    ], False, 2),
+
+    ("  Short-Term Debt & Commercial Paper", [
+        "ShortTermBorrowings",
+        "CommercialPaper",
+        "NotesPayableCurrent",
+        "DebtCurrent",
+        "ShortTermDebt",
+        "LineOfCreditCurrent",
+    ], False, 2),
+
+    ("  Current Portion of Long-Term Debt", [
+        "LongTermDebtCurrent",
+        "LongTermDebtAndCapitalLeaseObligationsCurrent",
+        "CurrentMaturitiesOfLongTermDebt",
+        "LongTermNotesPayableCurrent",
+    ], False, 2),
+
+    ("  Operating Lease Liability (Current)", [
+        "OperatingLeaseLiabilityCurrent",
+    ], False, 2),
+
+    ("  Finance Lease Liability (Current)", [
+        "FinanceLeaseLiabilityCurrent",
+        "CapitalLeaseObligationsCurrent",
+    ], False, 2),
+
+    ("  Restructuring Reserve (Current)", [
+        "RestructuringReserveCurrent",
+        "BusinessExitCostsLiabilityCurrent",
+    ], False, 2),
+
+    ("  Other Current Liabilities", [
+        "OtherLiabilitiesCurrent",
+        "OtherCurrentLiabilities",
+    ], False, 2),
+
+    ("Total Current Liabilities", ["LiabilitiesCurrent"], True, 1),
+
+    # ── NON-CURRENT LIABILITIES ───────────────────────────────────────────────
+    ("NON-CURRENT LIABILITIES", [], False, 0),
+
+    ("  Long-Term Debt", [
+        "LongTermDebtNoncurrent",
+        "LongTermDebt",
+        "LongTermDebtAndCapitalLeaseObligations",
+        "LongTermDebtAndFinanceLeaseObligations",
+        "SeniorLongTermNotes",
+        "ConvertibleDebtNoncurrent",
+        "LongTermNotesPayable",
+        "LongTermLineOfCredit",
+    ], False, 2),
+
+    ("  Operating Lease Liability (LT)", [
+        "OperatingLeaseLiabilityNoncurrent",
+    ], False, 2),
+
+    ("  Finance Lease Liability (LT)", [
+        "FinanceLeaseLiabilityNoncurrent",
+        "CapitalLeaseObligationsNoncurrent",
+    ], False, 2),
+
+    ("  Deferred Revenue (LT)", [
+        "DeferredRevenueNoncurrent",
+        "ContractWithCustomerLiabilityNoncurrent",
+    ], False, 2),
+
+    ("  Deferred Tax Liabilities", [
+        "DeferredIncomeTaxLiabilitiesNet",
+        "DeferredTaxLiabilitiesGross",
+        "DeferredTaxLiabilities",
+    ], False, 2),
+
+    ("  Pension & Post-Retirement Obligations", [
+        "PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent",
+        "PensionAndOtherPostretirementBenefitExpense",
+        "DefinedBenefitPlanBenefitObligation",
+        "OtherPostretirementBenefitsPayableNoncurrent",
+    ], False, 2),
+
+    ("  Other Non-Current Liabilities", [
+        "OtherLiabilitiesNoncurrent",
+        "OtherNoncurrentLiabilities",
+        "OtherLongTermLiabilities",
+    ], False, 2),
+
+    ("Total Liabilities", ["Liabilities"], True, 1),
 
     # ══ EQUITY ═════════════════════════════════════════════════════════════════
-    ("STOCKHOLDERS' EQUITY",           [], False, 0),
-    ("  Common Stock & APIC",
-     ["AdditionalPaidInCapital",
-      "CommonStockAndAdditionalPaidInCapital",
-      "AdditionalPaidInCapitalCommonStock"],
-     False, 2),
-    ("  Retained Earnings (Deficit)",  ["RetainedEarningsAccumulatedDeficit"], False, 2),
-    ("  Accumulated OCI",              ["AccumulatedOtherComprehensiveIncomeLossNetOfTax"], False, 2),
-    ("  Treasury Stock",
-     ["TreasuryStockValue","TreasuryStockCommonValue"],
-     False, 2),
-    ("Total Stockholders' Equity",
-     ["StockholdersEquity",
-      "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-     True, 1),
-    ("  Non-Controlling Interests",
-     ["MinorityInterest","RedeemableNoncontrollingInterestEquityCarryingAmount"],
-     False, 2),
+    ("STOCKHOLDERS' EQUITY", [], False, 0),
 
-    ("Total Liabilities & Equity",     ["LiabilitiesAndStockholdersEquity"], True, 1),
+    ("  Preferred Stock", [
+        "PreferredStockValue",
+        "PreferredStockValueOutstanding",
+        "PreferredUnitsOutstanding",
+    ], False, 2),
 
-    # ── Supplemental ─────────────────────────────────────────────────────────
-    ("SUPPLEMENTAL",                   [], False, 0),
-    ("Total Debt",
-     ["DebtLongtermAndShorttermCombinedAmount",
-      "LongTermDebtAndCapitalLeaseObligations",
-      "LongTermDebt"],
-     False, 1),
-    ("Net Cash & Investments",         [], False, 1),   # computed
-    ("Book Value per Share",           [], False, 1),   # computed
+    ("  Common Stock (Par Value)", [
+        "CommonStockValue",
+        "CommonStockValueOutstanding",
+    ], False, 2),
+
+    ("  Additional Paid-In Capital", [
+        "AdditionalPaidInCapital",
+        "AdditionalPaidInCapitalCommonStock",
+        "CommonStockAndAdditionalPaidInCapital",
+    ], False, 2),
+
+    ("  Retained Earnings / (Deficit)", [
+        "RetainedEarningsAccumulatedDeficit",
+        "RetainedEarningsUnappropriated",
+    ], False, 2),
+
+    ("  Accumulated Other Comprehensive Income / (Loss)", [
+        "AccumulatedOtherComprehensiveIncomeLossNetOfTax",
+        "AccumulatedOtherComprehensiveIncomeLossAvailableForSaleSecuritiesAdjustmentNetOfTax",
+        "OtherComprehensiveIncomeLossNetOfTax",
+    ], False, 2),
+
+    ("  Treasury Stock", [
+        "TreasuryStockValue",
+        "TreasuryStockCommonValue",
+        "TreasuryStockCarryingBasis",
+    ], False, 2),
+
+    ("  Partners' Capital (MLP)", [
+        "PartnersCapital",
+        "PartnersCapitalAttributableToParent",
+        "GeneralPartnersCapitalAccount",
+        "LimitedPartnersCapitalAccount",
+    ], False, 2),
+
+    ("Total Stockholders' Equity", [
+        "StockholdersEquity",
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+        "PartnersCapital",
+        "MembersEquity",
+    ], True, 1),
+
+    ("  Noncontrolling Interests", [
+        "MinorityInterest",
+        "NoncontrollingInterestMember",
+        "RedeemableNoncontrollingInterestEquityCarryingAmount",
+        "PartnersCapitalAttributableToNoncontrollingInterest",
+    ], False, 2),
+
+    ("Total Liabilities & Equity", [
+        "LiabilitiesAndStockholdersEquity",
+        "LiabilitiesAndPartnersCapital",
+        "LiabilitiesAndMembersEquity",
+    ], True, 1),
+
+    # ── SUPPLEMENTAL ─────────────────────────────────────────────────────────
+    ("SUPPLEMENTAL", [], False, 0),
+
+    ("Total Debt (Gross)", [
+        "DebtLongtermAndShorttermCombinedAmount",
+        "LongTermDebtAndCapitalLeaseObligations",
+        "LongTermDebt",
+        "DebtAndCapitalLeaseObligations",
+    ], False, 1),
+
+    ("Net Cash & Investments", [], False, 1),   # computed
+    ("Book Value per Share", [], False, 1),      # computed
+
+    ("  Shares Outstanding (M)", [
+        "CommonStockSharesOutstanding",
+        "CommonStockSharesIssued",
+    ], False, 2),
 ]
 
 CASH_FLOW_SCHEMA: List[Tuple] = [
-    # ══ OPERATING ══════════════════════════════════════════════════════════════
-    ("OPERATING ACTIVITIES",           [], False, 0),
-    ("  Net Income",
-     ["NetIncomeLoss","ProfitLoss"],
-     False, 2),
-    ("  Depreciation & Amortization",
-     ["DepreciationAndAmortization",
-      "DepreciationDepletionAndAmortization",
-      "Depreciation"],
-     False, 2),
-    ("  Stock-Based Compensation",
-     ["ShareBasedCompensation",
-      "AllocatedShareBasedCompensationExpense"],
-     False, 2),
-    ("  Deferred Income Taxes",
-     ["DeferredIncomeTaxExpenseBenefit",
-      "DeferredIncomeTaxesAndTaxCredits"],
-     False, 2),
-    ("  Amortization of Debt Costs",
-     ["AmortizationOfFinancingCostsAndDiscounts",
-      "AmortizationOfDebtDiscountPremium"],
-     False, 2),
-    ("  Other Non-Cash Items",
-     ["OtherNoncashIncomeExpense"],
-     False, 2),
-    ("  Δ Accounts Receivable",
-     ["IncreaseDecreaseInAccountsReceivable",
-      "IncreaseDecreaseInReceivables"],
-     False, 2),
-    ("  Δ Inventory",
-     ["IncreaseDecreaseInInventories"],
-     False, 2),
-    ("  Δ Accounts Payable",
-     ["IncreaseDecreaseInAccountsPayable",
-      "IncreaseDecreaseInAccountsPayableAndAccruedLiabilities"],
-     False, 2),
-    ("  Δ Deferred Revenue",
-     ["IncreaseDecreaseInContractWithCustomerLiability",
-      "IncreaseDecreaseInDeferredRevenue"],
-     False, 2),
-    ("  Δ Other Working Capital",
-     ["IncreaseDecreaseInOtherOperatingLiabilities",
-      "IncreaseDecreaseInOtherCurrentLiabilities"],
-     False, 2),
 
-    ("Cash from Operations",
-     ["NetCashProvidedByUsedInOperatingActivities",
-      "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
-     True, 1),
+    # ══ OPERATING ACTIVITIES ════════════════════════════════════════════════════
+    ("OPERATING ACTIVITIES", [], False, 0),
 
-    # ══ INVESTING ══════════════════════════════════════════════════════════════
-    ("INVESTING ACTIVITIES",           [], False, 0),
-    ("  Capital Expenditures",
-     ["PaymentsToAcquirePropertyPlantAndEquipment",
-      "PaymentsToAcquireProductiveAssets",
-      "CapitalExpenditures"],
-     False, 2),
-    ("  Capitalized Software",
-     ["PaymentsToDevelopSoftware",
-      "CapitalizedComputerSoftwareAdditions"],
-     False, 2),
-    ("  Acquisitions, Net of Cash",
-     ["PaymentsToAcquireBusinessesNetOfCashAcquired",
-      "PaymentsToAcquireBusinessesGross"],
-     False, 2),
-    ("  Purchases of Investments",
-     ["PaymentsToAcquireAvailableForSaleSecurities",
-      "PaymentsToAcquireInvestments",
-      "PaymentsToAcquireShortTermInvestments"],
-     False, 2),
-    ("  Maturities / Sales of Investments",
-     ["ProceedsFromSaleOfAvailableForSaleSecurities",
-      "ProceedsFromMaturitiesPrepaymentsAndCallsOfAvailableForSaleSecurities",
-      "ProceedsFromSaleMaturityAndCollectionOfInvestments"],
-     False, 2),
-    ("  Proceeds from Asset Sales",
-     ["ProceedsFromSaleOfPropertyPlantAndEquipment",
-      "ProceedsFromSalesOfBusinessAcquisitionAndDisposition"],
-     False, 2),
-    ("  Other Investing Activities",
-     ["PaymentsForProceedsFromOtherInvestingActivities"],
-     False, 2),
+    ("  Net Income", [
+        "NetIncomeLoss",
+        "ProfitLoss",
+        "NetIncomeLossAvailableToCommonStockholdersBasic",
+    ], False, 2),
 
-    ("Cash from Investing",
-     ["NetCashProvidedByUsedInInvestingActivities",
-      "NetCashProvidedByUsedInInvestingActivitiesContinuingOperations"],
-     True, 1),
+    ("  Depreciation & Amortization", [
+        "DepreciationAndAmortization",
+        "DepreciationDepletionAndAmortization",
+        "Depreciation",
+        "DepreciationAmortizationAndAccretionNet",
+    ], False, 2),
 
-    # ══ FINANCING ══════════════════════════════════════════════════════════════
-    ("FINANCING ACTIVITIES",           [], False, 0),
-    ("  Proceeds from Debt Issuance",
-     ["ProceedsFromIssuanceOfLongTermDebt",
-      "ProceedsFromIssuanceOfDebt",
-      "ProceedsFromLongTermLinesOfCredit"],
-     False, 2),
-    ("  Repayment of Debt",
-     ["RepaymentsOfLongTermDebt",
-      "RepaymentsOfDebt",
-      "RepaymentsOfLinesOfCredit"],
-     False, 2),
-    ("  Proceeds from Stock Issuance",
-     ["ProceedsFromIssuanceOfCommonStock",
-      "ProceedsFromStockOptionsExercised"],
-     False, 2),
-    ("  Share Repurchases",
-     ["PaymentsForRepurchaseOfCommonStock",
-      "PaymentsForRepurchaseOfEquity"],
-     False, 2),
-    ("  Dividends Paid",
-     ["PaymentsOfDividends",
-      "PaymentsOfDividendsCommonStock"],
-     False, 2),
-    ("  Finance Lease Payments",
-     ["FinanceLeasePrincipalPayments",
-      "RepaymentsOfLongTermCapitalLeaseObligations"],
-     False, 2),
-    ("  Other Financing Activities",
-     ["ProceedsFromPaymentsForOtherFinancingActivities"],
-     False, 2),
+    ("  Amortization of Intangibles", [
+        "AmortizationOfIntangibleAssets",
+        "AmortizationOfAcquiredIntangibleAssets",
+    ], False, 2),
 
-    ("Cash from Financing",
-     ["NetCashProvidedByUsedInFinancingActivities",
-      "NetCashProvidedByUsedInFinancingActivitiesContinuingOperations"],
-     True, 1),
+    ("  Stock-Based Compensation", [
+        "ShareBasedCompensation",
+        "AllocatedShareBasedCompensationExpense",
+        "EmployeeBenefitsAndShareBasedCompensation",
+    ], False, 2),
+
+    ("  Deferred Income Taxes", [
+        "DeferredIncomeTaxExpenseBenefit",
+        "DeferredIncomeTaxesAndTaxCredits",
+        "DeferredTaxExpenseBenefit",
+    ], False, 2),
+
+    ("  Amortization of Debt Costs & Discount", [
+        "AmortizationOfFinancingCostsAndDiscounts",
+        "AmortizationOfDebtDiscountPremium",
+        "AmortizationOfFinancingCosts",
+    ], False, 2),
+
+    ("  Impairment Charges", [
+        "GoodwillImpairmentLoss",
+        "AssetImpairmentCharges",
+        "ImpairmentOfIntangibleAssetsExcludingGoodwill",
+        "ImpairmentCharges",
+    ], False, 2),
+
+    ("  (Gain) / Loss on Investments & Sales", [
+        "GainLossOnSaleOfPropertyPlantEquipment",
+        "GainLossOnInvestments",
+        "GainLossOnSaleOfBusiness",
+        "GainLossOnDispositionOfAssets",
+    ], False, 2),
+
+    ("  Other Non-Cash Items", [
+        "OtherNoncashIncomeExpense",
+        "OtherOperatingActivitiesCashFlowStatement",
+        "OtherNoncashExpense",
+        "OtherNoncashIncome",
+    ], False, 2),
+
+    ("  Δ Accounts Receivable", [
+        "IncreaseDecreaseInAccountsReceivable",
+        "IncreaseDecreaseInReceivables",
+        "IncreaseDecreaseInAccountsAndOtherReceivables",
+    ], False, 2),
+
+    ("  Δ Unbilled Receivables", [
+        "IncreaseDecreaseInContractWithCustomerAsset",
+        "IncreaseDecreaseInUnbilledReceivables",
+    ], False, 2),
+
+    ("  Δ Inventory", [
+        "IncreaseDecreaseInInventories",
+        "IncreaseDecreaseInRetailRelatedInventories",
+    ], False, 2),
+
+    ("  Δ Prepaid & Other Current Assets", [
+        "IncreaseDecreaseInPrepaidDeferredExpenseAndOtherAssets",
+        "IncreaseDecreaseInPrepaidExpense",
+        "IncreaseDecreaseInOtherCurrentAssets",
+        "IncreaseDecreaseInOtherOperatingAssets",
+    ], False, 2),
+
+    ("  Δ Accounts Payable", [
+        "IncreaseDecreaseInAccountsPayable",
+        "IncreaseDecreaseInAccountsPayableAndAccruedLiabilities",
+        "IncreaseDecreaseInAccountsPayableTrade",
+    ], False, 2),
+
+    ("  Δ Accrued Liabilities", [
+        "IncreaseDecreaseInAccruedLiabilities",
+        "IncreaseDecreaseInEmployeeRelatedLiabilities",
+        "IncreaseDecreaseInAccruedInterestReceivableNet",
+    ], False, 2),
+
+    ("  Δ Deferred Revenue", [
+        "IncreaseDecreaseInContractWithCustomerLiability",
+        "IncreaseDecreaseInDeferredRevenue",
+        "IncreaseDecreaseInDeferredLiabilities",
+    ], False, 2),
+
+    ("  Δ Income Taxes Payable", [
+        "IncreaseDecreaseInIncomeTaxesPayableNetOfIncomeTaxesReceivable",
+        "IncreaseDecreaseInIncomeTaxesReceivable",
+        "IncreaseDecreaseInAccruedIncomeTaxesPayable",
+    ], False, 2),
+
+    ("  Δ Other Operating Liabilities", [
+        "IncreaseDecreaseInOtherOperatingLiabilities",
+        "IncreaseDecreaseInOtherCurrentLiabilities",
+        "IncreaseDecreaseInOtherNoncurrentLiabilities",
+    ], False, 2),
+
+    ("Cash from Operations", [
+        "NetCashProvidedByUsedInOperatingActivities",
+        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
+    ], True, 1),
+
+    # ══ INVESTING ACTIVITIES ════════════════════════════════════════════════════
+    ("INVESTING ACTIVITIES", [], False, 0),
+
+    ("  Capital Expenditures", [
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsToAcquireProductiveAssets",
+        "CapitalExpenditures",
+        "PaymentsToAcquireAndDevelopRealEstate",
+    ], False, 2),
+
+    ("  Capitalized Software Development", [
+        "PaymentsToDevelopSoftware",
+        "CapitalizedComputerSoftwareAdditions",
+        "PaymentsToAcquireSoftware",
+    ], False, 2),
+
+    ("  Capitalized Contract Costs", [
+        "CapitalizedContractCostAmortization",
+        "IncreaseDecreaseInCapitalizedContractCostNet",
+    ], False, 2),
+
+    ("  Acquisitions, Net of Cash", [
+        "PaymentsToAcquireBusinessesNetOfCashAcquired",
+        "PaymentsToAcquireBusinessesGross",
+        "BusinessAcquisitionCostOfAcquiredEntityTransactionCosts",
+        "PaymentsForProceedsFromBusinessesAndInterestInAffiliates",
+    ], False, 2),
+
+    ("  Purchases of Investments", [
+        "PaymentsToAcquireAvailableForSaleSecurities",
+        "PaymentsToAcquireInvestments",
+        "PaymentsToAcquireShortTermInvestments",
+        "PaymentsToAcquireOtherInvestments",
+        "PaymentsToAcquireEquityMethodInvestments",
+        "PaymentsToAcquireTradingSecuritiesHeldForInvestment",
+        "PaymentsForProceedsFromInvestments",
+    ], False, 2),
+
+    ("  Maturities / Sales of Investments", [
+        "ProceedsFromSaleOfAvailableForSaleSecurities",
+        "ProceedsFromMaturitiesPrepaymentsAndCallsOfAvailableForSaleSecurities",
+        "ProceedsFromSaleMaturityAndCollectionOfInvestments",
+        "ProceedsFromSaleOfShortTermInvestments",
+        "ProceedsFromEquityMethodInvestmentDividendsOrDistributionsReturnOfCapital",
+        "ProceedsFromSaleAndCollectionOfNotesReceivable",
+    ], False, 2),
+
+    ("  Proceeds from Asset / Business Divestitures", [
+        "ProceedsFromSaleOfPropertyPlantAndEquipment",
+        "ProceedsFromDivestitureOfBusinesses",
+        "ProceedsFromSalesOfBusinessAcquisitionAndDisposition",
+        "ProceedsFromSaleOfProductiveAssets",
+    ], False, 2),
+
+    ("  Other Investing Activities", [
+        "PaymentsForProceedsFromOtherInvestingActivities",
+        "OtherPaymentsToAcquireBusinesses",
+        "PaymentsForProceedsFromLoansAndLeases",
+    ], False, 2),
+
+    ("Cash from Investing", [
+        "NetCashProvidedByUsedInInvestingActivities",
+        "NetCashProvidedByUsedInInvestingActivitiesContinuingOperations",
+    ], True, 1),
+
+    # ══ FINANCING ACTIVITIES ════════════════════════════════════════════════════
+    ("FINANCING ACTIVITIES", [], False, 0),
+
+    ("  Proceeds from Long-Term Debt", [
+        "ProceedsFromIssuanceOfLongTermDebt",
+        "ProceedsFromIssuanceOfDebt",
+        "ProceedsFromIssuanceOfSeniorLongTermDebt",
+        "ProceedsFromLongTermLinesOfCredit",
+        "ProceedsFromIssuanceOfConvertibleDebt",
+        "ProceedsFromDebtNetOfIssuanceCosts",
+    ], False, 2),
+
+    ("  Repayment of Long-Term Debt", [
+        "RepaymentsOfLongTermDebt",
+        "RepaymentsOfDebt",
+        "RepaymentsOfSeniorDebt",
+        "RepaymentsOfConvertibleDebt",
+        "RepaymentsOfLinesOfCredit",
+        "RepaymentsOfLongTermLinesOfCredit",
+    ], False, 2),
+
+    ("  Net Commercial Paper / Short-Term Borrowings", [
+        "ProceedsFromRepaymentsOfCommercialPaper",
+        "ProceedsFromShortTermDebt",
+        "RepaymentsOfShortTermDebt",
+        "ProceedsFromRepaymentsOfShortTermDebt",
+    ], False, 2),
+
+    ("  Debt Issuance Costs", [
+        "PaymentsOfDebtIssuanceCosts",
+        "PaymentsOfFinancingCosts",
+    ], False, 2),
+
+    ("  Proceeds from Stock Issuance & Options", [
+        "ProceedsFromIssuanceOfCommonStock",
+        "ProceedsFromStockOptionsExercised",
+        "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlans",
+        "ProceedsFromStockPlansIssuedDuringPeriodValue",
+    ], False, 2),
+
+    ("  Taxes Withheld on RSU Vesting", [
+        "PaymentsRelatedToTaxWithholdingForShareBasedCompensation",
+        "EmployeeServiceShareBasedCompensationTaxBenefitFromCompensationExpense",
+    ], False, 2),
+
+    ("  Share Repurchases", [
+        "PaymentsForRepurchaseOfCommonStock",
+        "PaymentsForRepurchaseOfEquity",
+        "StockRepurchasedDuringPeriodValue",
+    ], False, 2),
+
+    ("  Dividends Paid (Common)", [
+        "PaymentsOfDividendsCommonStock",
+        "PaymentsOfDividends",
+        "DividendsPaid",
+    ], False, 2),
+
+    ("  Dividends Paid (Preferred)", [
+        "PaymentsOfDividendsPreferredStockAndPreferenceStock",
+        "PaymentsOfDividendsMinorityInterest",
+    ], False, 2),
+
+    ("  Finance Lease Principal Payments", [
+        "FinanceLeasePrincipalPayments",
+        "RepaymentsOfLongTermCapitalLeaseObligations",
+        "RepaymentOfNotesReceivableFromRelatedParties",
+    ], False, 2),
+
+    ("  Distributions to Noncontrolling Interests", [
+        "PaymentsToMinorityShareholders",
+        "PaymentsOfDistributionsToAffiliates",
+        "MinorityInterestDecreaseFromDistributionsToNoncontrollingInterestHolders",
+    ], False, 2),
+
+    ("  Contributions from Noncontrolling Interests", [
+        "ProceedsFromMinorityShareholders",
+        "ProceedsFromContributionsFromAffiliates",
+    ], False, 2),
+
+    ("  Other Financing Activities", [
+        "ProceedsFromPaymentsForOtherFinancingActivities",
+        "ProceedsFromOtherEquity",
+        "PaymentsForOtherFinancingActivities",
+    ], False, 2),
+
+    ("Cash from Financing", [
+        "NetCashProvidedByUsedInFinancingActivities",
+        "NetCashProvidedByUsedInFinancingActivitiesContinuingOperations",
+    ], True, 1),
 
     # ══ SUMMARY ════════════════════════════════════════════════════════════════
-    ("SUMMARY",                        [], False, 0),
-    ("  FX Effect on Cash",
-     ["EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
-      "EffectOfExchangeRateOnCashAndCashEquivalents"],
-     False, 2),
-    ("Net Change in Cash",
-     ["CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect",
-      "CashAndCashEquivalentsPeriodIncreaseDecrease"],
-     True, 1),
+    ("SUMMARY", [], False, 0),
 
-    ("SUPPLEMENTAL",                   [], False, 0),
-    ("Free Cash Flow",                 [],   True, 1),  # computed: CFO − |CapEx|
-    ("  FCF Margin (%)",               [], False, 2),   # computed
-    ("  FCF Conversion (%)",           [], False, 2),   # computed: FCF / Net Income
+    ("  FX Effect on Cash", [
+        "EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+        "EffectOfExchangeRateOnCashAndCashEquivalents",
+        "EffectOfExchangeRateOnCash",
+    ], False, 2),
+
+    ("Net Change in Cash", [
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect",
+        "CashAndCashEquivalentsPeriodIncreaseDecrease",
+        "NetCashProvidedByUsedInContinuingOperations",
+    ], True, 1),
+
+    ("SUPPLEMENTAL", [], False, 0),
+
+    ("  Cash Paid for Interest", [
+        "InterestPaidNet",
+        "InterestPaid",
+        "InterestPaidCapitalized",
+    ], False, 2),
+
+    ("  Cash Paid for Taxes", [
+        "IncomeTaxesPaid",
+        "IncomeTaxesPaidNet",
+    ], False, 2),
+
+    ("Free Cash Flow", [], True, 1),      # computed: CFO − |CapEx|
+    ("  FCF Margin (%)", [], False, 2),   # computed
+    ("  FCF / Net Income (%)", [], False, 2),  # computed
 ]
+
 
 # ── yfinance fallback maps ─────────────────────────────────────────────────────
 _YF_IS: Dict[str, str] = {
-    "Revenue":                          "Total Revenue",
-    "Cost of Revenue":                  "Cost Of Revenue",
-    "Gross Profit":                     "Gross Profit",
-    "  Research & Development":         "Research And Development",
-    "  SG&A":                           "Selling General And Administration",
-    "Operating Income (EBIT)":          "Operating Income",
-    "  Interest Expense":               "Interest Expense",
-    "Income Before Tax":                "Pretax Income",
-    "  Income Tax Expense / (Benefit)": "Tax Provision",
-    "Net Income":                       "Net Income",
-    "EPS — Basic":                      "Basic EPS",
-    "EPS — Diluted":                    "Diluted EPS",
-    "Shares (Basic, M)":                "Basic Average Shares",
-    "Shares (Diluted, M)":              "Diluted Average Shares",
-    "EBITDA":                           "EBITDA",
-    "  D&A":                            "Reconciled Depreciation",
-    "  Stock-Based Compensation":       "Stock Based Compensation",
+    "Revenue":                              "Total Revenue",
+    "Cost of Revenue":                      "Cost Of Revenue",
+    "Gross Profit":                         "Gross Profit",
+    "  Research & Development":             "Research And Development",
+    "  SG&A (Combined)":                    "Selling General And Administration",
+    "  General & Administrative":           "General And Administrative Expense",
+    "Operating Income (EBIT)":              "Operating Income",
+    "  Interest Expense":                   "Interest Expense",
+    "  Interest Income":                    "Interest Income",
+    "Income Before Tax":                    "Pretax Income",
+    "  Income Tax Expense / (Benefit)":     "Tax Provision",
+    "Net Income from Cont. Operations":     "Net Income Continuous Operations",
+    "Net Income":                           "Net Income",
+    "EPS — Basic":                          "Basic EPS",
+    "EPS — Diluted":                        "Diluted EPS",
+    "Shares Outstanding — Basic (M)":       "Basic Average Shares",
+    "Shares Outstanding — Diluted (M)":     "Diluted Average Shares",
+    "EBITDA":                               "EBITDA",
+    "  Depreciation & Amortization":        "Reconciled Depreciation",
+    "  Stock-Based Compensation":           "Stock Based Compensation",
+    "  Capital Expenditures (IS context)":  "Capital Expenditure",
 }
 _YF_BS: Dict[str, str] = {
-    "  Cash & Cash Equivalents":        "Cash And Cash Equivalents",
-    "  Short-Term Investments":         "Other Short Term Investments",
-    "  Accounts Receivable, Net":       "Receivables",
-    "  Inventory":                      "Inventory",
-    "  Prepaid Expenses & Other":       "Other Current Assets",
-    "Total Current Assets":             "Current Assets",
-    "  PP&E, Net":                      "Net PPE",
-    "  Goodwill":                       "Goodwill",
-    "  Intangible Assets, Net":         "Other Intangible Assets",
-    "Total Assets":                     "Total Assets",
-    "  Accounts Payable":               "Accounts Payable",
-    "  Accrued Liabilities":            "Current Accrued Expenses",
-    "  Short-Term Debt":                "Current Debt",
-    "Total Current Liabilities":        "Current Liabilities",
-    "  Long-Term Debt":                 "Long Term Debt",
-    "Total Liabilities":                "Total Liabilities Net Minority Interest",
-    "  Retained Earnings (Deficit)":    "Retained Earnings",
-    "Total Stockholders' Equity":       "Stockholders Equity",
-    "Total Liabilities & Equity":       "Total Assets",
-    "Total Debt":                       "Total Debt",
+    "  Cash & Cash Equivalents":            "Cash And Cash Equivalents",
+    "  Short-Term Investments":             "Other Short Term Investments",
+    "  Accounts Receivable, Net":           "Receivables",
+    "  Inventory":                          "Inventory",
+    "  Prepaid Expenses & Other Current Assets": "Other Current Assets",
+    "Total Current Assets":                 "Current Assets",
+    "  PP&E, Net":                          "Net PPE",
+    "  Operating Lease ROU Assets":         "Leases",
+    "  Goodwill":                           "Goodwill",
+    "  Intangible Assets, Net":             "Other Intangible Assets",
+    "  Deferred Tax Assets (LT)":           "Deferred Tax Assets",
+    "  Other Non-Current Assets":           "Other Non Current Assets",
+    "Total Assets":                         "Total Assets",
+    "  Accounts Payable":                   "Accounts Payable",
+    "  Accrued Compensation & Benefits":    "Payables And Accrued Expenses",
+    "  Accrued Expenses & Other Current Liabilities": "Current Accrued Expenses",
+    "  Deferred Revenue (Current)":         "Deferred Revenue",
+    "  Short-Term Debt & Commercial Paper": "Current Debt",
+    "  Current Portion of Long-Term Debt":  "Current Debt And Capital Lease Obligation",
+    "  Operating Lease Liability (Current)":"Current Capital Lease Obligation",
+    "Total Current Liabilities":            "Current Liabilities",
+    "  Long-Term Debt":                     "Long Term Debt",
+    "  Operating Lease Liability (LT)":     "Long Term Capital Lease Obligation",
+    "  Deferred Tax Liabilities":           "Deferred Tax Liabilities Net",
+    "  Other Non-Current Liabilities":      "Other Non Current Liabilities",
+    "Total Liabilities":                    "Total Liabilities Net Minority Interest",
+    "  Additional Paid-In Capital":         "Capital Stock",
+    "  Retained Earnings / (Deficit)":      "Retained Earnings",
+    "  Accumulated Other Comprehensive Income / (Loss)": "Other Equity Adjustments",
+    "  Treasury Stock":                     "Treasury Stock",
+    "Total Stockholders' Equity":           "Stockholders Equity",
+    "  Noncontrolling Interests":           "Minority Interest",
+    "Total Liabilities & Equity":           "Total Assets",
+    "Total Debt (Gross)":                   "Total Debt",
 }
 _YF_CF: Dict[str, str] = {
-    "  Net Income":                     "Net Income",
-    "  Depreciation & Amortization":    "Depreciation And Amortization",
-    "  Stock-Based Compensation":       "Stock Based Compensation",
-    "  Deferred Income Taxes":          "Deferred Tax",
-    "  Δ Accounts Receivable":          "Change In Receivables",
-    "  Δ Inventory":                    "Change In Inventory",
-    "  Δ Accounts Payable":             "Change In Payables And Accrued Expense",
-    "  Δ Deferred Revenue":             "Change In Other Current Liabilities",
-    "Cash from Operations":             "Operating Cash Flow",
-    "  Capital Expenditures":           "Capital Expenditure",
-    "  Acquisitions, Net of Cash":      "Acquisitions Net",
-    "  Purchases of Investments":       "Purchase Of Investment",
-    "  Maturities / Sales of Investments": "Sale Of Investment",
-    "Cash from Investing":              "Investing Cash Flow",
-    "  Proceeds from Debt Issuance":    "Issuance Of Debt",
-    "  Repayment of Debt":              "Repayment Of Debt",
-    "  Share Repurchases":              "Repurchase Of Capital Stock",
-    "  Dividends Paid":                 "Payment Of Dividends",
-    "Cash from Financing":              "Financing Cash Flow",
-    "Net Change in Cash":               "Changes In Cash",
+    "  Net Income":                         "Net Income",
+    "  Depreciation & Amortization":        "Depreciation And Amortization",
+    "  Amortization of Intangibles":        "Amortization Of Intangibles",
+    "  Stock-Based Compensation":           "Stock Based Compensation",
+    "  Deferred Income Taxes":              "Deferred Tax",
+    "  (Gain) / Loss on Investments & Sales": "Gain On Sale Of Security",
+    "  Other Non-Cash Items":               "Other Non Cash Items",
+    "  Δ Accounts Receivable":              "Change In Receivables",
+    "  Δ Inventory":                        "Change In Inventory",
+    "  Δ Prepaid & Other Current Assets":   "Change In Other Current Assets",
+    "  Δ Accounts Payable":                 "Change In Payables And Accrued Expense",
+    "  Δ Accrued Liabilities":              "Change In Other Current Liabilities",
+    "  Δ Deferred Revenue":                 "Change In Other Working Capital",
+    "Cash from Operations":                 "Operating Cash Flow",
+    "  Capital Expenditures":               "Capital Expenditure",
+    "  Capitalized Software Development":   "Net Intangibles Purchase And Sale",
+    "  Acquisitions, Net of Cash":          "Acquisitions Net",
+    "  Purchases of Investments":           "Purchase Of Investment",
+    "  Maturities / Sales of Investments":  "Sale Of Investment",
+    "  Proceeds from Asset / Business Divestitures": "Net Business Purchase And Sale",
+    "Cash from Investing":                  "Investing Cash Flow",
+    "  Proceeds from Long-Term Debt":       "Issuance Of Debt",
+    "  Repayment of Long-Term Debt":        "Repayment Of Debt",
+    "  Proceeds from Stock Issuance & Options": "Common Stock Issuance",
+    "  Taxes Withheld on RSU Vesting":      "Common Stock Payments",
+    "  Share Repurchases":                  "Repurchase Of Capital Stock",
+    "  Dividends Paid (Common)":            "Payment Of Dividends",
+    "  Finance Lease Principal Payments":   "Repayment Of Debt",
+    "Cash from Financing":                  "Financing Cash Flow",
+    "Net Change in Cash":                   "Changes In Cash",
+    "  Cash Paid for Interest":             "Interest Paid Supplemental Data",
+    "  Cash Paid for Taxes":                "Income Tax Paid Supplemental Data",
 }
+
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 def _inject_css() -> None:
     st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-html, body, [class*="css"] {{
-    font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
-}}
-.stTabs [data-baseweb="tab-list"] {{
-    gap: 0;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-    background: transparent !important;
-}}
-.stTabs [data-baseweb="tab"] {{
-    font-weight: 600; font-size: 13px; padding: 10px 22px;
-    color: rgba(255,255,255,0.45);
-    background: transparent !important;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-}}
-.stTabs [aria-selected="true"] {{
-    color: #ffffff !important;
-    border-bottom: 2px solid {BLUE} !important;
-    background: transparent !important;
-}}
-.fin-wrap {{
-    overflow-x: auto;
-    border-radius: 12px;
-    border: 1px solid rgba(255,255,255,0.07);
-    background: rgba(255,255,255,0.015);
-    margin-top: 8px;
-}}
-.fin-table {{
-    width: 100%; border-collapse: collapse;
-    font-size: 12.5px;
-}}
-.fin-table thead th {{
-    background: rgba(255,255,255,0.04);
-    color: rgba(255,255,255,0.4);
-    font-weight: 700; font-size: 10.5px;
-    letter-spacing: 0.07em; text-transform: uppercase;
-    padding: 10px 16px 9px 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.09);
-    text-align: right; white-space: nowrap;
-}}
-.fin-table thead th.hdr-lbl {{
-    text-align: left; min-width: 230px; max-width: 290px;
-}}
-.fin-table thead th.hdr-yr {{ min-width: 88px; }}
-.fin-table td {{
-    padding: 5px 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.035);
-    color: rgba(255,255,255,0.85);
-    text-align: right;
-    font-variant-numeric: tabular-nums; white-space: nowrap;
-}}
-.fin-table td.td-lbl {{ text-align: left; }}
-.fin-table tbody tr:hover td {{
-    background: rgba(255,255,255,0.022);
-}}
-
-/* Section banner rows */
-.row-sec td {{
-    font-size: 9.5px !important; font-weight: 800 !important;
-    letter-spacing: 0.13em !important; text-transform: uppercase !important;
-    color: rgba(255,255,255,0.3) !important;
-    background: rgba(10,124,255,0.055) !important;
-    padding-top: 11px !important; padding-bottom: 5px !important;
-    border-top: 1px solid rgba(255,255,255,0.07) !important;
-    border-bottom: none !important;
-}}
-
-/* Subtotal rows */
-.row-sub td {{
-    font-weight: 700 !important; color: #ffffff !important;
-    border-top: 1px solid rgba(255,255,255,0.14) !important;
-    border-bottom: 1px solid rgba(255,255,255,0.14) !important;
-    background: rgba(255,255,255,0.018) !important;
-}}
-
-/* Indent levels */
-.row-i1 td.td-lbl {{ padding-left: 16px !important; }}
-.row-i2 td.td-lbl {{
-    padding-left: 32px !important;
-    color: rgba(255,255,255,0.58) !important;
-    font-size: 12px !important;
-}}
-.row-i3 td.td-lbl {{
-    padding-left: 48px !important;
-    color: rgba(255,255,255,0.42) !important;
-    font-size: 11.5px !important;
-}}
-
-/* YoY growth rows */
-.row-yoy td {{
-    font-size: 10px !important;
-    padding-top: 2px !important; padding-bottom: 2px !important;
-    border-bottom: 1px solid rgba(255,255,255,0.025) !important;
-    background: rgba(0,0,0,0.1) !important;
-    color: rgba(255,255,255,0.38) !important;
-}}
-.row-yoy td.td-lbl {{
-    padding-left: 20px !important;
-    font-style: italic;
-}}
-
-/* Value states */
-.vp  {{ color: {UP} !important; }}
-.vn  {{ color: {DOWN} !important; }}
-.vna {{ color: rgba(255,255,255,0.18) !important; }}
-.vpc {{ font-size: 11px !important; color: rgba(255,255,255,0.45) !important; }}
-.veps {{ font-style: italic; }}
-
-/* Source badges */
-.sb {{
-    display: inline-block; font-size: 8.5px; font-weight: 700;
-    letter-spacing: 0.05em; text-transform: uppercase;
-    padding: 1px 5px; border-radius: 3px; margin-left: 5px;
-    vertical-align: middle; opacity: 0.65;
-}}
-.sb-sec  {{ background: rgba(10,124,255,0.2);  color: {BLUE}; }}
-.sb-yf   {{ background: rgba(255,159,10,0.2);  color: {ORANGE}; }}
-.sb-calc {{ background: rgba(0,200,5,0.12);    color: {UP}; }}
-
-/* Special-structure banner */
-.struct-ban {{
-    background: rgba(255,159,10,0.07);
-    border: 1px solid rgba(255,159,10,0.22);
-    border-radius: 10px; padding: 13px 18px; margin-bottom: 14px;
-    font-size: 12.5px; color: rgba(255,255,255,0.78); line-height: 1.72;
-}}
-.hist-pill {{
-    display: inline-block; font-size: 11px; font-weight: 700;
-    padding: 3px 13px; border-radius: 20px; margin-bottom: 10px;
-    border: 1px solid currentColor;
-}}
-.fin-footnote {{
-    margin-top: 22px; padding: 12px 16px;
-    background: rgba(255,255,255,0.015);
-    border-radius: 8px; font-size: 10.5px;
-    color: rgba(255,255,255,0.28); line-height: 1.85;
-}}
+html,body,[class*="css"]{{font-family:'Inter',-apple-system,'Segoe UI',sans-serif;}}
+.stTabs [data-baseweb="tab-list"]{{gap:0;border-bottom:1px solid rgba(255,255,255,0.1);background:transparent!important;}}
+.stTabs [data-baseweb="tab"]{{font-weight:600;font-size:13px;padding:10px 22px;color:rgba(255,255,255,0.45);background:transparent!important;border-bottom:2px solid transparent;border-radius:0;}}
+.stTabs [aria-selected="true"]{{color:#fff!important;border-bottom:2px solid {BLUE}!important;background:transparent!important;}}
+.fin-wrap{{overflow-x:auto;border-radius:12px;border:1px solid rgba(255,255,255,0.07);background:rgba(255,255,255,0.015);margin-top:8px;}}
+.fin-table{{width:100%;border-collapse:collapse;font-size:12.5px;}}
+.fin-table thead th{{background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.4);font-weight:700;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;padding:10px 16px 9px;border-bottom:1px solid rgba(255,255,255,0.09);text-align:right;white-space:nowrap;}}
+.fin-table thead th.hl{{text-align:left;min-width:240px;max-width:300px;}}
+.fin-table thead th.hy{{min-width:88px;}}
+.fin-table td{{padding:5px 16px;border-bottom:1px solid rgba(255,255,255,.035);color:rgba(255,255,255,.85);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}}
+.fin-table td.tl{{text-align:left;}}
+.fin-table tbody tr:hover td{{background:rgba(255,255,255,.022);}}
+.rs td{{font-size:9.5px!important;font-weight:800!important;letter-spacing:.13em!important;text-transform:uppercase!important;color:rgba(255,255,255,.3)!important;background:rgba(10,124,255,.055)!important;padding-top:11px!important;padding-bottom:5px!important;border-top:1px solid rgba(255,255,255,.07)!important;border-bottom:none!important;}}
+.rt td{{font-weight:700!important;color:#fff!important;border-top:1px solid rgba(255,255,255,.14)!important;border-bottom:1px solid rgba(255,255,255,.14)!important;background:rgba(255,255,255,.018)!important;}}
+.ri1 td.tl{{padding-left:16px!important;}}
+.ri2 td.tl{{padding-left:32px!important;color:rgba(255,255,255,.6)!important;font-size:12px!important;}}
+.ri3 td.tl{{padding-left:48px!important;color:rgba(255,255,255,.42)!important;font-size:11.5px!important;}}
+.ry td{{font-size:10px!important;padding-top:2px!important;padding-bottom:2px!important;border-bottom:1px solid rgba(255,255,255,.025)!important;background:rgba(0,0,0,.1)!important;color:rgba(255,255,255,.38)!important;}}
+.ry td.tl{{padding-left:20px!important;font-style:italic;}}
+.vp{{color:{UP}!important;}}.vn{{color:{DOWN}!important;}}.vna{{color:rgba(255,255,255,.2)!important;}}.vpc{{font-size:11px!important;color:rgba(255,255,255,.45)!important;}}.veps{{font-style:italic;}}
+.sb{{display:inline-block;font-size:8.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:1px 5px;border-radius:3px;margin-left:5px;vertical-align:middle;opacity:.65;}}
+.sb-sec{{background:rgba(10,124,255,.2);color:{BLUE};}}.sb-yf{{background:rgba(255,159,10,.2);color:{ORANGE};}}.sb-calc{{background:rgba(0,200,5,.12);color:{UP};}}
+.struct-ban{{background:rgba(255,159,10,.07);border:1px solid rgba(255,159,10,.22);border-radius:10px;padding:13px 18px;margin-bottom:14px;font-size:12.5px;color:rgba(255,255,255,.78);line-height:1.72;}}
+.hist-pill{{display:inline-block;font-size:11px;font-weight:700;padding:3px 13px;border-radius:20px;margin-bottom:10px;border:1px solid currentColor;}}
+.fin-note{{margin-top:22px;padding:12px 16px;background:rgba(255,255,255,.015);border-radius:8px;font-size:10.5px;color:rgba(255,255,255,.28);line-height:1.85;}}
 </style>""", unsafe_allow_html=True)
 
 
@@ -735,7 +1243,6 @@ def _load_facts(cik: str) -> dict:
     except Exception:
         return {}
 
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_yf(ticker: str) -> dict:
     try:
@@ -747,9 +1254,7 @@ def _load_yf(ticker: str) -> dict:
             "info": t.info or {},
         }
     except Exception:
-        return {"is": pd.DataFrame(), "bs": pd.DataFrame(),
-                "cf": pd.DataFrame(), "info": {}}
-
+        return {"is": pd.DataFrame(), "bs": pd.DataFrame(), "cf": pd.DataFrame(), "info": {}}
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def _cik_map() -> dict:
@@ -759,94 +1264,60 @@ def _cik_map() -> dict:
         return {}
 
 
-# ── SEC XBRL extractors ───────────────────────────────────────────────────────
+# ── SEC extractors ─────────────────────────────────────────────────────────────
 
-def _sec_annual(
-    facts: dict,
-    tags: List[str],
-    unit: str = "USD",
-    n: int = 10,
-) -> Tuple[pd.Series, str]:
-    """
-    Pull annual (10-K only) series from raw XBRL facts.
-    Returns (series indexed by fy-end date, tag_used).
-    Latest-filed accession wins per fiscal-year-end date.
-    """
+def _sec_usd(facts: dict, tags: List[str], n: int) -> Tuple[pd.Series, str]:
+    """Pull the first matching tag from SEC XBRL (10-K, USD, n years)."""
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
     for tag in tags:
         if tag not in us_gaap:
             continue
-        entries = us_gaap[tag].get("units", {}).get(unit, [])
+        entries = us_gaap[tag].get("units", {}).get("USD", [])
         rows = []
         for e in entries:
             if e.get("form") != "10-K":
                 continue
-            end_str = e.get("end")
-            if not end_str:
-                continue
             try:
-                rows.append({
-                    "end":  pd.to_datetime(end_str),
-                    "accn": e.get("accn", ""),
-                    "val":  float(e["val"]),
-                })
+                rows.append({"end": pd.to_datetime(e["end"]), "accn": e.get("accn",""), "val": float(e["val"])})
             except Exception:
                 continue
         if not rows:
             continue
-        df = (
-            pd.DataFrame(rows)
-            .sort_values("accn")
-            .drop_duplicates(subset=["end"], keep="last")
-            .sort_values("end")
-        )
+        df = (pd.DataFrame(rows).sort_values("accn")
+              .drop_duplicates(subset=["end"], keep="last")
+              .sort_values("end"))
         return df.set_index("end")["val"].iloc[-n:], tag
     return pd.Series(dtype="float64"), ""
 
 
-def _sec_pershare(
-    facts: dict,
-    tags: List[str],
-    n: int = 10,
-) -> pd.Series:
-    """Extract per-share (USD/shares) or share-count (shares) annual series."""
+def _sec_shares(facts: dict, tags: List[str], n: int) -> pd.Series:
+    """Pull share-count or per-share data from SEC XBRL."""
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
     for tag in tags:
         if tag not in us_gaap:
             continue
-        for unit_key in ("USD/shares", "shares"):
-            entries = us_gaap[tag].get("units", {}).get(unit_key, [])
+        for unit in ("USD/shares", "shares"):
+            entries = us_gaap[tag].get("units", {}).get(unit, [])
             rows = []
             for e in entries:
                 if e.get("form") != "10-K":
                     continue
-                end_str = e.get("end")
-                if not end_str:
-                    continue
                 try:
-                    rows.append({
-                        "end":  pd.to_datetime(end_str),
-                        "accn": e.get("accn", ""),
-                        "val":  float(e["val"]),
-                    })
+                    rows.append({"end": pd.to_datetime(e["end"]), "accn": e.get("accn",""), "val": float(e["val"])})
                 except Exception:
                     continue
             if not rows:
                 continue
-            df = (
-                pd.DataFrame(rows)
-                .sort_values("accn")
-                .drop_duplicates(subset=["end"], keep="last")
-                .sort_values("end")
-            )
+            df = (pd.DataFrame(rows).sort_values("accn")
+                  .drop_duplicates(subset=["end"], keep="last")
+                  .sort_values("end"))
             return df.set_index("end")["val"].iloc[-n:]
     return pd.Series(dtype="float64")
 
 
-# ── Statement DataFrame builder ───────────────────────────────────────────────
-
 _PER_SHARE = {"EPS — Basic", "EPS — Diluted"}
-_SHARE_CNT = {"Shares (Basic, M)", "Shares (Diluted, M)"}
+_SHARE_CNT = {"Shares Outstanding — Basic (M)", "Shares Outstanding — Diluted (M)",
+              "  Shares Outstanding (M)"}
 
 
 def _build_df(
@@ -854,110 +1325,83 @@ def _build_df(
     facts: dict,
     yf_df: pd.DataFrame,
     yf_map: Dict[str, str],
-    n: int = 10,
+    n: int,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
-    """
-    Build wide DataFrame (rows=labels, cols=fy-end dates) + sources dict.
-    Column order: oldest-first (caller can reverse for display).
-    """
     raw: Dict[str, pd.Series] = {}
-    sources: Dict[str, str]   = {}
+    src: Dict[str, str]       = {}
 
     for label, tags, _sub, _ind in schema:
         if not tags:
-            raw[label]     = pd.Series(dtype="float64")
-            sources[label] = ""
+            raw[label] = pd.Series(dtype="float64")
+            src[label] = ""
             continue
 
-        # ── Per-share / share-count rows ──────────────────────────────────────
         if label in _PER_SHARE or label in _SHARE_CNT:
-            s = _sec_pershare(facts, tags, n)
-            if not s.empty:
-                raw[label]     = s
-                sources[label] = "SEC"
-                continue
+            s = _sec_shares(facts, tags, n)
         else:
-            # ── Standard USD rows ─────────────────────────────────────────────
-            s, _used = _sec_annual(facts, tags, n=n)
-            if not s.empty:
-                raw[label]     = s
-                sources[label] = "SEC"
-                continue
+            s, _ = _sec_usd(facts, tags, n)
 
-        # ── yfinance fallback ─────────────────────────────────────────────────
+        if not s.empty:
+            raw[label] = s
+            src[label] = "SEC"
+            continue
+
+        # yfinance fallback
         yf_field = yf_map.get(label)
         if yf_field and not yf_df.empty and yf_field in yf_df.index:
             row = yf_df.loc[yf_field].dropna()
             if not row.empty:
                 row.index = pd.to_datetime(row.index).tz_localize(None)
-                row = row.sort_index().iloc[-n:].astype(float)
-                raw[label]     = row
-                sources[label] = "yfinance"
+                raw[label] = row.sort_index().iloc[-n:].astype(float)
+                src[label] = "yfinance"
                 continue
 
-        raw[label]     = pd.Series(dtype="float64")
-        sources[label] = ""
+        raw[label] = pd.Series(dtype="float64")
+        src[label] = ""
 
-    # ── Align all series to a common column set ───────────────────────────────
     non_empty = [s for s in raw.values() if not s.empty]
     if not non_empty:
-        return pd.DataFrame(), sources
+        return pd.DataFrame(), src
 
-    all_dates = sorted(set().union(*[s.index for s in non_empty]))
-    all_dates = all_dates[-n:]
-
-    out = {
-        label: {d: s.get(d, np.nan) for d in all_dates}
-        for label, s in raw.items()
-    }
-    df = pd.DataFrame(out).T
+    all_dates = sorted(set().union(*[s.index for s in non_empty]))[-n:]
+    df = pd.DataFrame({lbl: {d: s.get(d, np.nan) for d in all_dates} for lbl, s in raw.items()}).T
     df.columns = pd.to_datetime(df.columns)
-    return df, sources
+    return df, src
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# COMPUTED ROW INJECTION
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Computed rows ──────────────────────────────────────────────────────────────
 
 def _inject_is_computed(df: pd.DataFrame, src: Dict[str, str]) -> None:
     if df.empty:
         return
-    # EBITDA = EBIT + D&A
     if "EBITDA" in df.index and df.loc["EBITDA"].isna().all():
         ebit = df.loc["Operating Income (EBIT)"] if "Operating Income (EBIT)" in df.index else None
-        da   = df.loc["  D&A"]                   if "  D&A" in df.index else None
+        da   = df.loc["  Depreciation & Amortization"] if "  Depreciation & Amortization" in df.index else None
         if ebit is not None and da is not None:
             comp = ebit.add(da.abs(), fill_value=np.nan)
             if not comp.dropna().empty:
                 df.loc["EBITDA"] = comp
                 src["EBITDA"]    = "calc"
-    # Effective Tax Rate
     if "  Effective Tax Rate (%)" in df.index:
-        ebt = df.loc["Income Before Tax"]                   if "Income Before Tax"                   in df.index else None
-        tax = df.loc["  Income Tax Expense / (Benefit)"]   if "  Income Tax Expense / (Benefit)"   in df.index else None
+        ebt = df.loc.get("Income Before Tax")
+        tax = df.loc.get("  Income Tax Expense / (Benefit)")
         if ebt is not None and tax is not None:
             rate = tax.abs().div(ebt.abs().replace(0, np.nan)) * 100
             df.loc["  Effective Tax Rate (%)"] = rate
             src["  Effective Tax Rate (%)"]    = "calc"
 
 
-def _inject_bs_computed(
-    df: pd.DataFrame,
-    src: Dict[str, str],
-    yf_info: dict,
-) -> None:
+def _inject_bs_computed(df: pd.DataFrame, src: Dict[str, str], yf_info: dict) -> None:
     if df.empty:
         return
-    # Net Cash = Cash + ST Inv − Total Debt
     if "Net Cash & Investments" in df.index:
-        cash  = df.loc["  Cash & Cash Equivalents"] if "  Cash & Cash Equivalents" in df.index else pd.Series(dtype=float)
-        stinv = df.loc["  Short-Term Investments"]  if "  Short-Term Investments"  in df.index else pd.Series(dtype=float)
-        debt  = df.loc["Total Debt"]                if "Total Debt"                in df.index else pd.Series(dtype=float)
+        cash  = df.loc["  Cash & Cash Equivalents"]   if "  Cash & Cash Equivalents"   in df.index else pd.Series(dtype=float)
+        stinv = df.loc["  Short-Term Investments"]    if "  Short-Term Investments"    in df.index else pd.Series(dtype=float)
+        debt  = df.loc["Total Debt (Gross)"]           if "Total Debt (Gross)"           in df.index else pd.Series(dtype=float)
         if not cash.dropna().empty and not debt.dropna().empty:
             nc = cash.add(stinv.fillna(0), fill_value=0).sub(debt.abs().fillna(0), fill_value=0)
             df.loc["Net Cash & Investments"] = nc
             src["Net Cash & Investments"]    = "calc"
-    # Book Value per Share
     if "Book Value per Share" in df.index:
         eq  = df.loc["Total Stockholders' Equity"] if "Total Stockholders' Equity" in df.index else pd.Series(dtype=float)
         shs = yf_info.get("sharesOutstanding", np.nan)
@@ -966,11 +1410,7 @@ def _inject_bs_computed(
             src["Book Value per Share"]    = "calc"
 
 
-def _inject_cf_computed(
-    df: pd.DataFrame,
-    src: Dict[str, str],
-    is_df: pd.DataFrame,
-) -> None:
+def _inject_cf_computed(df: pd.DataFrame, src: Dict[str, str], is_df: pd.DataFrame) -> None:
     if df.empty or "Free Cash Flow" not in df.index:
         return
     ocf   = df.loc["Cash from Operations"]   if "Cash from Operations"   in df.index else pd.Series(dtype=float)
@@ -979,81 +1419,48 @@ def _inject_cf_computed(
         fcf = ocf.add(capex.apply(lambda x: -abs(x) if not pd.isna(x) else np.nan), fill_value=np.nan)
         df.loc["Free Cash Flow"] = fcf
         src["Free Cash Flow"]    = "calc"
-        # FCF Margin
         if "  FCF Margin (%)" in df.index and not is_df.empty and "Revenue" in is_df.index:
-            rev = is_df.loc["Revenue"]
-            df.loc["  FCF Margin (%)"] = fcf.div(rev.replace(0, np.nan)) * 100
+            df.loc["  FCF Margin (%)"] = fcf.div(is_df.loc["Revenue"].replace(0, np.nan)) * 100
             src["  FCF Margin (%)"]    = "calc"
-        # FCF Conversion
-        if "  FCF Conversion (%)" in df.index and not is_df.empty and "Net Income" in is_df.index:
-            ni = is_df.loc["Net Income"]
-            df.loc["  FCF Conversion (%)"] = fcf.div(ni.replace(0, np.nan)) * 100
-            src["  FCF Conversion (%)"]    = "calc"
+        if "  FCF / Net Income (%)" in df.index and not is_df.empty and "Net Income" in is_df.index:
+            df.loc["  FCF / Net Income (%)"] = fcf.div(is_df.loc["Net Income"].replace(0, np.nan)) * 100
+            src["  FCF / Net Income (%)"]    = "calc"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# FORMATTING
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Formatting ─────────────────────────────────────────────────────────────────
 
-_GROWTH_AFTER = {
-    "Revenue", "Gross Profit", "Operating Income (EBIT)", "EBITDA",
-    "Net Income", "Cash from Operations", "Free Cash Flow",
-    "Total Assets", "Total Stockholders' Equity", "Total Liabilities & Equity",
+_GROWTH_ROWS = {
+    "Revenue","Gross Profit","Operating Income (EBIT)","EBITDA","Net Income",
+    "Cash from Operations","Free Cash Flow","Total Assets","Total Stockholders' Equity",
 }
-_PCT_ROWS = {"  Effective Tax Rate (%)", "  FCF Margin (%)", "  FCF Conversion (%)"}
-_NEUTRAL  = {
-    "  Δ Accounts Receivable", "  Δ Inventory", "  Δ Accounts Payable",
-    "  Δ Deferred Revenue", "  Δ Other Working Capital",
-    "Net Cash & Investments", "Book Value per Share",
-    "  Effective Tax Rate (%)", "  FCF Margin (%)", "  FCF Conversion (%)",
-}
+_PCT_ROWS = {"  Effective Tax Rate (%)","  FCF Margin (%)","  FCF / Net Income (%)"}
 
 
-def _fmt_val(
-    val: float,
-    label: str,
-    divisor: float,
-    cs_base: Optional[float],
-) -> Tuple[str, str]:
-    """Return (display_text, css_class)."""
+def _fmt(val: float, label: str, divisor: float, cs_base: Optional[float]) -> Tuple[str, str]:
     if pd.isna(val):
         return "—", "vna"
-
     if label in _PCT_ROWS:
         return f"{val:.1f}%", "vpc"
     if label in _PER_SHARE:
         return f"${val:.2f}", "veps"
     if label in _SHARE_CNT:
         return f"{val/1e6:,.1f}M", ""
-
     if cs_base is not None and not pd.isna(cs_base) and cs_base != 0:
         return f"{val/cs_base*100:.1f}%", "vpc"
-
     s = val / divisor
-    if abs(s) >= 10_000:
-        txt = f"{s:,.0f}"
-    elif abs(s) >= 1_000:
-        txt = f"{s:,.0f}"
-    elif abs(s) >= 100:
-        txt = f"{s:,.1f}"
-    else:
-        txt = f"{s:,.2f}"
-
-    cls = "" if label in _NEUTRAL else ("vn" if val < 0 else "")
+    txt = f"{s:,.0f}" if abs(s) >= 100 else f"{s:,.2f}"
+    cls = "" if label in _PCT_ROWS else ("vn" if val < 0 else "")
     return txt, cls
 
 
-def _fmt_growth(cur: float, prv: float) -> Tuple[str, str]:
+def _fmt_yoy(cur: float, prv: float) -> Tuple[str, str]:
     if pd.isna(cur) or pd.isna(prv) or prv == 0:
         return "—", "vna"
-    g   = (cur - prv) / abs(prv) * 100
-    sgn = "+" if g >= 0 else ""
-    return f"{sgn}{g:.1f}%", ("vp" if g >= 0 else "vn")
+    g = (cur - prv) / abs(prv) * 100
+    return f"{'+'if g>=0 else ''}{g:.1f}%", ("vp" if g >= 0 else "vn")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# HTML TABLE RENDERER
-# ══════════════════════════════════════════════════════════════════════════════
+# ── HTML table ─────────────────────────────────────────────────────────────────
 
 def _render_table(
     df: pd.DataFrame,
@@ -1061,324 +1468,201 @@ def _render_table(
     src: Dict[str, str],
     divisor: float,
     unit_lbl: str,
-    common_size: bool,
-    cs_base_row: str,
+    cs_on: bool,
+    cs_row: str,
     hide_empty: bool,
 ) -> str:
     if df.empty:
-        return "<p style='color:rgba(255,255,255,0.35);'>No data available.</p>"
+        return "<p style='color:rgba(255,255,255,.35)'>No data available.</p>"
 
-    # Newest year on the left
-    cols = list(reversed(list(df.columns)))
-    yr_hdrs = [c.strftime("FY%Y") for c in cols]
+    cols = list(reversed(list(df.columns)))   # newest left
+    hdrs = [c.strftime("FY%Y") for c in cols]
 
-    # Header
-    hdr = f'<th class="hdr-lbl">{unit_lbl}</th>'
-    for yr in yr_hdrs:
-        hdr += f'<th class="hdr-yr">{yr}</th>'
-    html = f'<div class="fin-wrap"><table class="fin-table"><thead><tr>{hdr}</tr></thead><tbody>'
+    h = f'<th class="hl">{unit_lbl}</th>' + "".join(f'<th class="hy">{y}</th>' for y in hdrs)
+    html = f'<div class="fin-wrap"><table class="fin-table"><thead><tr>{h}</tr></thead><tbody>'
 
-    cs_base_series = (
-        df.loc[cs_base_row]
-        if common_size and cs_base_row and cs_base_row in df.index
-        else None
-    )
+    cs_series = df.loc[cs_row] if cs_on and cs_row and cs_row in df.index else None
 
     for label, tags, is_sub, indent in schema:
         if label not in df.index:
             continue
+        row = df.loc[label]
 
-        row_vals = df.loc[label]
-
-        # Hide empty data rows
-        if hide_empty and tags and row_vals.dropna().empty:
+        # Skip empty data rows when hiding
+        if hide_empty and tags and row.dropna().empty:
             continue
 
-        # ── Section banner ────────────────────────────────────────────────────
+        # Section banner
         if not tags and indent == 0:
-            html += (
-                f'<tr class="row-sec">'
-                f'<td class="td-lbl" colspan="{1+len(cols)}">'
-                f'{label}</td></tr>'
-            )
+            html += f'<tr class="rs"><td class="tl" colspan="{1+len(cols)}">{label}</td></tr>'
             continue
 
-        # ── Computed placeholder with no data yet ─────────────────────────────
-        if not tags and indent > 0 and row_vals.dropna().empty:
+        # Computed placeholder not yet filled
+        if not tags and indent > 0 and row.dropna().empty:
             continue
 
-        # Source badge
-        s = src.get(label, "")
         badge = (
-            '<span class="sb sb-sec">SEC</span>'  if s == "SEC"      else
-            '<span class="sb sb-yf">YF</span>'    if s == "yfinance" else
-            '<span class="sb sb-calc">Calc</span>'if s == "calc"     else
-            ""
+            '<span class="sb sb-sec">SEC</span>'   if src.get(label) == "SEC"      else
+            '<span class="sb sb-yf">YF</span>'     if src.get(label) == "yfinance" else
+            '<span class="sb sb-calc">Calc</span>' if src.get(label) == "calc"     else ""
         )
 
-        # Row class
-        if is_sub:
-            row_cls = "row-sub"
-        elif indent == 2:
-            row_cls = "row-i2"
-        elif indent == 3:
-            row_cls = "row-i3"
-        else:
-            row_cls = "row-i1"
+        row_cls = "rt" if is_sub else f"ri{indent}"
 
-        # Label cell
-        cells = f'<td class="td-lbl">{label}{badge}</td>'
-
-        # Value cells
+        cells = f'<td class="tl">{label}{badge}</td>'
         for col in cols:
-            v  = row_vals[col]
-            cb = cs_base_series[col] if cs_base_series is not None else None
-            txt, vcls = _fmt_val(v, label, divisor, cb)
+            v  = row[col]
+            cb = cs_series[col] if cs_series is not None else None
+            txt, vcls = _fmt(v, label, divisor, cb)
             cells += f'<td class="{vcls}">{txt}</td>'
-
         html += f'<tr class="{row_cls}">{cells}</tr>'
 
-        # YoY growth sub-row for key subtotals
-        if label in _GROWTH_AFTER and len(cols) >= 2:
-            gcells = '<td class="td-lbl" style="padding-left:20px;font-style:italic;font-size:10px;">YoY</td>'
+        # YoY growth row
+        if label in _GROWTH_ROWS and len(cols) >= 2:
+            gc = '<td class="tl" style="padding-left:20px;font-style:italic;font-size:10px;">YoY</td>'
             for i, col in enumerate(cols):
                 if i == len(cols) - 1:
-                    gcells += '<td class="vna">—</td>'
+                    gc += '<td class="vna">—</td>'
                 else:
-                    prv = cols[i + 1]
-                    gtxt, gcls = _fmt_growth(row_vals[col], row_vals[prv])
-                    gcells += f'<td class="{gcls}" style="font-size:10px;">{gtxt}</td>'
-            html += f'<tr class="row-yoy">{gcells}</tr>'
+                    txt, vcls = _fmt_yoy(row[col], row[cols[i+1]])
+                    gc += f'<td class="{vcls}" style="font-size:10px;">{txt}</td>'
+            html += f'<tr class="ry">{gc}</tr>'
 
-    html += '</tbody></table></div>'
-    return html
+    return html + "</tbody></table></div>"
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# STRUCTURE WARNING
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Structure banner ───────────────────────────────────────────────────────────
 
-def _structure_warning(ticker: str, name: str) -> Optional[str]:
+def _warn(ticker: str, name: str) -> Optional[str]:
     t = ticker.upper()
     if t in _REITS:
-        return (
-            f"<b>{name}</b> is a <b>Real Estate Investment Trust (REIT)</b>. "
-            "The GAAP statements below follow the exact as-filed 10-K presentation. "
-            "Key REIT metrics — FFO, AFFO, and NOI — are non-GAAP and not shown here. "
-            "Cost of goods sold will appear blank as REITs do not report COGS."
-        )
+        return (f"<b>{name}</b> is a <b>REIT</b>. Key metrics are FFO, AFFO, and NOI — not GAAP net income. "
+                "COGS lines are blank by design. Statements shown as filed in the 10-K.")
     if t in _MLPS:
-        return (
-            f"<b>{name}</b> is a <b>Master Limited Partnership (MLP)</b>. "
-            "Income tax is near-zero (pass-through entity). Equity is reported as "
-            "<i>Partners' Capital</i>. The primary economic metric is "
-            "<b>Distributable Cash Flow (DCF)</b>, not GAAP net income."
-        )
+        return (f"<b>{name}</b> is an <b>MLP</b>. Effectively zero income tax (pass-through). "
+                "Equity is Partners' Capital. Primary metric is Distributable Cash Flow.")
     if t in _INSURERS:
-        return (
-            f"<b>{name}</b> is a <b>P&C insurer</b>. Revenue = Net Premiums Earned — "
-            "there is no traditional COGS line. Key metrics (Combined Ratio, Loss Ratio, "
-            "Underwriting Income) are not captured in the standard layout."
-        )
+        return (f"<b>{name}</b> is a <b>P&C insurer</b>. Revenue = Net Premiums Earned — no COGS. "
+                "Key metrics: Combined Ratio, Loss Ratio, Underwriting Income.")
     if t in _BANKS:
-        return (
-            f"<b>{name}</b> is a <b>bank / financial institution</b>. "
-            "Revenue = Net Interest Income + Non-Interest Income. Key metrics "
-            "(NIM, Efficiency Ratio, Tier 1 Capital) are not shown in the standard layout."
-        )
-    if t in _IFRS_FILERS:
-        return (
-            f"<b>{name}</b> files under <b>IFRS</b>, not US GAAP. "
-            "SEC XBRL tags (us-gaap namespace) will largely return no data. "
-            "yfinance is the primary source for this company. Some lines may be blank."
-        )
+        return (f"<b>{name}</b> is a <b>bank</b>. Revenue = NII + Non-Interest Income. "
+                "Key metrics: NIM, Efficiency Ratio, Tier 1 Capital Ratio.")
+    if t in _IFRS:
+        return (f"<b>{name}</b> files under <b>IFRS</b>, not US GAAP. "
+                "SEC XBRL (us-gaap namespace) will be mostly empty. yfinance is the primary source.")
     return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MAIN ENTRY POINT
+# RENDER
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_financials(ticker: str) -> None:
     _inject_css()
     ticker = ticker.upper()
 
-    # ── Page title ────────────────────────────────────────────────────────────
-    st.markdown(
-        '<h1 style="font-size:30px;font-weight:800;color:#ffffff;margin-bottom:6px;">'
-        'Financials</h1>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<h1 style="font-size:30px;font-weight:800;color:#fff;margin-bottom:6px;">Financials</h1>',
+                unsafe_allow_html=True)
 
-    # ── Fetch data ────────────────────────────────────────────────────────────
     cik = _cik_map().get(ticker, "")
     with st.spinner(f"Fetching {ticker} from SEC EDGAR…"):
         facts   = _load_facts(cik) if cik else {}
         yf_data = _load_yf(ticker)
 
-    yf_info = yf_data.get("info", {})
-    name = (
-        yf_info.get("longName")
-        or yf_info.get("shortName")
-        or facts.get("entityName", "")
-        or ticker
-    )
-    currency = yf_info.get("financialCurrency", "USD")
-    has_sec  = bool(facts.get("facts", {}).get("us-gaap"))
+    yf_info  = yf_data.get("info", {})
+    name     = yf_info.get("longName") or yf_info.get("shortName") or facts.get("entityName","") or ticker
+    currency = yf_info.get("financialCurrency","USD")
+    has_sec  = bool(facts.get("facts",{}).get("us-gaap"))
     has_yf   = any(not v.empty for v in [yf_data["is"], yf_data["bs"], yf_data["cf"]])
 
-    # ── Header row ────────────────────────────────────────────────────────────
     badges = ""
-    if has_sec:
-        badges += f'<span class="sb sb-sec" style="font-size:10px;padding:3px 10px;opacity:1;">SEC XBRL — Primary</span> '
-    if has_yf:
-        badges += f'<span class="sb sb-yf" style="font-size:10px;padding:3px 10px;opacity:1;">yfinance — Fallback</span>'
+    if has_sec:  badges += f'<span class="sb sb-sec" style="font-size:10px;padding:3px 10px;opacity:1;">SEC XBRL — Primary</span> '
+    if has_yf:   badges += f'<span class="sb sb-yf" style="font-size:10px;padding:3px 10px;opacity:1;">yfinance — Fallback</span>'
     if not has_sec and not has_yf:
-        badges = '<span style="color:#FF3B30;font-size:12px;">⚠ No data sources available</span>'
+        badges = '<span style="color:#FF3B30;font-size:12px;">⚠ No data available</span>'
 
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;">'
         f'<span style="font-size:20px;font-weight:700;color:#fff;">{name}</span>'
-        f'<span style="color:rgba(255,255,255,0.25);">·</span>'
-        f'<span style="color:rgba(255,255,255,0.42);font-size:13px;">{ticker}</span>'
-        f'<span style="color:rgba(255,255,255,0.25);">·</span>'
-        f'<span style="color:rgba(255,255,255,0.42);font-size:13px;">{currency}</span>'
-        f'<span style="color:rgba(255,255,255,0.25);">·</span>'
-        f'{badges}'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+        f'<span style="color:rgba(255,255,255,.25);">·</span>'
+        f'<span style="color:rgba(255,255,255,.42);font-size:13px;">{ticker}</span>'
+        f'<span style="color:rgba(255,255,255,.25);">·</span>'
+        f'<span style="color:rgba(255,255,255,.42);font-size:13px;">{currency}</span>'
+        f'<span style="color:rgba(255,255,255,.25);">·</span>'
+        f'{badges}</div>', unsafe_allow_html=True)
 
-    # ── Structure banner ──────────────────────────────────────────────────────
-    warn = _structure_warning(ticker, name)
-    if warn:
-        st.markdown(f'<div class="struct-ban">⚠️  {warn}</div>', unsafe_allow_html=True)
+    w = _warn(ticker, name)
+    if w:
+        st.markdown(f'<div class="struct-ban">⚠️ {w}</div>', unsafe_allow_html=True)
 
-    # ── Controls bar ──────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns([1.6, 1.6, 1.0, 1.0])
     with c1:
-        n_yrs = st.select_slider(
-            "Years of history",
-            options=[5, 6, 7, 8, 9, 10],
-            value=10,
-            key=f"fin_n_{ticker}",
-        )
+        n_yrs = st.select_slider("Years of history", options=[5,6,7,8,9,10], value=10, key=f"fin_n_{ticker}")
     with c2:
-        unit_opt = st.selectbox(
-            "Display unit",
-            ["Actual ($)", "Thousands ($K)", "Millions ($M)", "Billions ($B)"],
-            index=2,
-            key=f"fin_u_{ticker}",
-        )
+        unit_opt = st.selectbox("Display unit", ["Actual ($)","Thousands ($K)","Millions ($M)","Billions ($B)"],
+                                index=2, key=f"fin_u_{ticker}")
     with c3:
-        cs_on = st.toggle("Common size", value=False, key=f"fin_cs_{ticker}")
+        cs_on  = st.toggle("Common size",      value=False, key=f"fin_cs_{ticker}")
     with c4:
-        hide_e = st.toggle("Hide empty rows", value=True, key=f"fin_he_{ticker}")
+        hide_e = st.toggle("Hide empty rows",  value=True,  key=f"fin_he_{ticker}")
 
-    div_map  = {"Actual ($)": 1, "Thousands ($K)": 1e3,
-                "Millions ($M)": 1e6, "Billions ($B)": 1e9}
-    lbl_map  = {"Actual ($)": "$", "Thousands ($K)": "$K",
-                "Millions ($M)": "$M", "Billions ($B)": "$B"}
+    div_map  = {"Actual ($)":1,"Thousands ($K)":1e3,"Millions ($M)":1e6,"Billions ($B)":1e9}
+    lbl_map  = {"Actual ($)":"$","Thousands ($K)":"$K","Millions ($M)":"$M","Billions ($B)":"$B"}
     divisor  = div_map[unit_opt]
     unit_lbl = lbl_map[unit_opt]
 
-    # ── Statement tabs ────────────────────────────────────────────────────────
-    tab_is, tab_bs, tab_cf = st.tabs([
-        "📋  Income Statement",
-        "🏦  Balance Sheet",
-        "💵  Cash Flow Statement",
-    ])
+    tab_is, tab_bs, tab_cf = st.tabs(["📋  Income Statement","🏦  Balance Sheet","💵  Cash Flow Statement"])
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # INCOME STATEMENT
-    # ════════════════════════════════════════════════════════════════════════════
+    # ── Income Statement ──────────────────────────────────────────────────────
     with tab_is:
-        with st.spinner("Pulling from SEC XBRL…"):
+        with st.spinner("Loading…"):
             is_df, is_src = _build_df(INCOME_SCHEMA, facts, yf_data["is"], _YF_IS, n_yrs)
         _inject_is_computed(is_df, is_src)
-
         if is_df.empty:
-            st.warning(f"No Income Statement data available for {ticker}.")
+            st.warning(f"No Income Statement data for {ticker}.")
         else:
             n_av = int(is_df.loc["Revenue"].dropna().shape[0]) if "Revenue" in is_df.index else len(is_df.columns)
             pc   = UP if n_av >= 8 else (ORANGE if n_av >= 5 else DOWN)
-            st.markdown(
-                f'<span class="hist-pill" style="color:{pc};">● {n_av} fiscal years</span>',
-                unsafe_allow_html=True,
-            )
-            cs_row = "Revenue" if cs_on else ""
-            st.markdown(
-                _render_table(is_df, INCOME_SCHEMA, is_src, divisor, unit_lbl, cs_on, cs_row, hide_e),
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<span class="hist-pill" style="color:{pc};">● {n_av} fiscal years</span>', unsafe_allow_html=True)
+            st.markdown(_render_table(is_df, INCOME_SCHEMA, is_src, divisor, unit_lbl, cs_on, "Revenue" if cs_on else "", hide_e), unsafe_allow_html=True)
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # BALANCE SHEET
-    # ════════════════════════════════════════════════════════════════════════════
+    # ── Balance Sheet ─────────────────────────────────────────────────────────
     with tab_bs:
-        with st.spinner("Pulling from SEC XBRL…"):
+        with st.spinner("Loading…"):
             bs_df, bs_src = _build_df(BALANCE_SHEET_SCHEMA, facts, yf_data["bs"], _YF_BS, n_yrs)
         _inject_bs_computed(bs_df, bs_src, yf_info)
-
         if bs_df.empty:
-            st.warning(f"No Balance Sheet data available for {ticker}.")
+            st.warning(f"No Balance Sheet data for {ticker}.")
         else:
             n_av = int(bs_df.loc["Total Assets"].dropna().shape[0]) if "Total Assets" in bs_df.index else len(bs_df.columns)
             pc   = UP if n_av >= 8 else (ORANGE if n_av >= 5 else DOWN)
-            st.markdown(
-                f'<span class="hist-pill" style="color:{pc};">● {n_av} fiscal years</span>',
-                unsafe_allow_html=True,
-            )
-            cs_row = "Total Assets" if cs_on else ""
-            st.markdown(
-                _render_table(bs_df, BALANCE_SHEET_SCHEMA, bs_src, divisor, unit_lbl, cs_on, cs_row, hide_e),
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<span class="hist-pill" style="color:{pc};">● {n_av} fiscal years</span>', unsafe_allow_html=True)
+            st.markdown(_render_table(bs_df, BALANCE_SHEET_SCHEMA, bs_src, divisor, unit_lbl, cs_on, "Total Assets" if cs_on else "", hide_e), unsafe_allow_html=True)
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # CASH FLOW STATEMENT
-    # ════════════════════════════════════════════════════════════════════════════
+    # ── Cash Flow Statement ───────────────────────────────────────────────────
     with tab_cf:
-        with st.spinner("Pulling from SEC XBRL…"):
+        with st.spinner("Loading…"):
             cf_df, cf_src = _build_df(CASH_FLOW_SCHEMA, facts, yf_data["cf"], _YF_CF, n_yrs)
         _inject_cf_computed(cf_df, cf_src, is_df if not is_df.empty else pd.DataFrame())
-
         if cf_df.empty:
-            st.warning(f"No Cash Flow Statement data available for {ticker}.")
+            st.warning(f"No Cash Flow Statement data for {ticker}.")
         else:
             n_av = int(cf_df.loc["Cash from Operations"].dropna().shape[0]) if "Cash from Operations" in cf_df.index else len(cf_df.columns)
             pc   = UP if n_av >= 8 else (ORANGE if n_av >= 5 else DOWN)
-            st.markdown(
-                f'<span class="hist-pill" style="color:{pc};">● {n_av} fiscal years</span>',
-                unsafe_allow_html=True,
-            )
-            cs_row = "Cash from Operations" if cs_on else ""
-            st.markdown(
-                _render_table(cf_df, CASH_FLOW_SCHEMA, cf_src, divisor, unit_lbl, cs_on, cs_row, hide_e),
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<span class="hist-pill" style="color:{pc};">● {n_av} fiscal years</span>', unsafe_allow_html=True)
+            st.markdown(_render_table(cf_df, CASH_FLOW_SCHEMA, cf_src, divisor, unit_lbl, cs_on, "Cash from Operations" if cs_on else "", hide_e), unsafe_allow_html=True)
 
-    # ── Footnotes ─────────────────────────────────────────────────────────────
     st.markdown(
-        '<div class="fin-footnote">'
-        '<b style="color:rgba(255,255,255,0.45);">Data sources & methodology</b><br>'
-        '<span class="sb sb-sec">SEC</span> '
-        'Sourced directly from SEC EDGAR XBRL companyfacts endpoint (10-K annual filings only). '
-        'For each concept, the latest-filed accession number per fiscal-year-end wins '
-        '(picks up amendments and restatements automatically). '
-        'Tags are queried from the us-gaap XBRL namespace in priority order as filed.<br>'
-        '<span class="sb sb-yf">YF</span> '
-        'Sourced from yfinance annual statements — used only when XBRL returns no data for that row.<br>'
+        '<div class="fin-note">'
+        '<b style="color:rgba(255,255,255,.45);">Data sources & methodology</b><br>'
+        '<span class="sb sb-sec">SEC</span> Raw XBRL companyfacts (10-K only). '
+        'Latest accession per fiscal-year-end wins — restatements applied automatically. '
+        'Each row queries up to ~10 tag variants in priority order.<br>'
+        '<span class="sb sb-yf">YF</span> yfinance annual statements — fallback only when every XBRL tag returns empty.<br>'
         '<span class="sb sb-calc">Calc</span> '
-        'Computed: EBITDA = EBIT + D&amp;A · FCF = CFO − |CapEx| · '
-        'FCF Margin = FCF ÷ Revenue · FCF Conversion = FCF ÷ Net Income · '
-        'Net Cash = Cash + ST Investments − Total Debt · '
-        'Effective Tax Rate = Tax Expense ÷ Pre-tax Income.<br>'
-        'Columns display fiscal-year-end dates, newest on the left. '
-        'YoY growth rows appear beneath key subtotals. '
-        'All figures in reported currency. '
-        'Negative values shown in red only for P&amp;L losses; '
-        'financing outflows are presented as filed (may be negative).'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+        'EBITDA = EBIT + D&amp;A · FCF = CFO − |CapEx| · FCF Margin = FCF ÷ Revenue · '
+        'FCF/NI = FCF ÷ Net Income · Net Cash = Cash + ST Investments − Debt · '
+        'ETR = Tax ÷ Pre-tax Income.<br>'
+        'Newest year on the left. YoY growth rows beneath key subtotals. '
+        'Toggle <i>Hide empty rows</i> OFF to see every possible line item for any company.</div>',
+        unsafe_allow_html=True)
