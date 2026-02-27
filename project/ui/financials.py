@@ -188,6 +188,8 @@ INCOME_SCHEMA: List[Tuple] = [
     ], True, 1),
 
     # ── OPERATING EXPENSES ────────────────────────────────────────────────────
+    ("OPERATING EXPENSES", [], False, 0),
+
     ("  Research & Development", [
         "ResearchAndDevelopmentExpense",
         "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
@@ -234,6 +236,21 @@ INCOME_SCHEMA: List[Tuple] = [
         "BusinessAcquisitionCostOfAcquiredEntityAmortizationOfIntangibles",
         "AmortizationOfDeferredSalesCommissions",
         "AmortizationOfCapitalizedCostsToObtainContracts",
+    ], False, 2),
+
+    ("  Depreciation & Amortization", [
+        "DepreciationAndAmortization",
+        "DepreciationDepletionAndAmortization",
+        "Depreciation",
+        "DepreciationAmortizationAndAccretionNet",
+        "DepreciationNonproduction",
+    ], False, 2),
+
+    ("  Stock-Based Compensation", [
+        "ShareBasedCompensation",
+        "AllocatedShareBasedCompensationExpense",
+        "ShareBasedCompensationExpense",
+        "EmployeeBenefitsAndShareBasedCompensation",
     ], False, 2),
 
     ("  Lease / ROU Amortization", [
@@ -292,57 +309,42 @@ INCOME_SCHEMA: List[Tuple] = [
         "IncomeLossFromContinuingOperationsBeforeInterestExpenseInterestIncomeIncomeTaxesExtraordinaryItemsNoncontrollingInterestsNet",
     ], True, 1),
 
-    ("  Depreciation & Amortization", [
-        "DepreciationAndAmortization",
-        "DepreciationDepletionAndAmortization",
-        "Depreciation",
-        "DepreciationAmortizationAndAccretionNet",
-        "DepreciationNonproduction",
-    ], False, 2),
-
     ("EBITDA", [], True, 1),  # computed: EBIT + D&A
 
-    ("  Stock-Based Compensation", [
-        "ShareBasedCompensation",
-        "AllocatedShareBasedCompensationExpense",
-        "ShareBasedCompensationExpense",
-        "EmployeeBenefitsAndShareBasedCompensation",
-    ], False, 2),
-
     # ── BELOW OPERATING LINE ──────────────────────────────────────────────────
-    ("  Interest Expense", [
+    ("Interest Expense", [
         "InterestExpense",
         "InterestAndDebtExpense",
         "InterestExpenseDebt",
         "InterestExpenseRelatedParty",
         "InterestExpenseOther",
         "FinanceLeaseInterestExpense",
-    ], False, 2),
+    ], False, 1),
 
-    ("  Interest Income", [
+    ("Interest Income", [
         "InterestIncomeOperating",
         "InvestmentIncomeInterest",
         "InterestAndDividendIncomeOperating",
         "InterestAndDividendIncomeSecurities",
-    ], False, 2),
+    ], False, 1),
 
-    ("  Other Non-Operating Income / (Expense)", [
+    ("Other Non-Operating Income / (Expense)", [
         "OtherNonoperatingIncomeExpense",
         "NonoperatingIncomeExpense",
         "OtherNonoperatingIncome",
         "OtherNonoperatingExpense",
         "InterestAndOtherIncome",
         "OtherIncomeLoss",
-    ], False, 2),
+    ], False, 1),
 
-    ("  FX Gain / (Loss)", [
+    ("FX Gain / (Loss)", [
         "ForeignCurrencyTransactionGainLossBeforeTax",
         "ForeignCurrencyTransactionGainLossRealized",
         "ForeignCurrencyTransactionGainLossUnrealized",
         "GainLossOnForeignCurrencyDerivativeInstrumentsNotDesignatedAsHedgingInstruments",
-    ], False, 2),
+    ], False, 1),
 
-    ("  Gain / (Loss) on Investments", [
+    ("Gain / (Loss) on Investments", [
         "GainLossOnInvestments",
         "GainLossOnSaleOfInvestments",
         "GainLossOnSaleOfBusiness",
@@ -350,25 +352,25 @@ INCOME_SCHEMA: List[Tuple] = [
         "GainLossOnSaleOfPropertyPlantEquipment",
         "EquitySecuritiesFvNiUnrealizedGainLoss",
         "GainLossOnDerivativeInstrumentsNetPretax",
-    ], False, 2),
+    ], False, 1),
 
-    ("  Equity Method Investment Income / (Loss)", [
+    ("Equity Method Investment Income / (Loss)", [
         "IncomeLossFromEquityMethodInvestments",
         "IncomeLossFromEquityMethodInvestmentsNetOfDividendsOrDistributions",
-    ], False, 2),
+    ], False, 1),
 
     ("Income Before Tax", [
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
-        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",  # rare but used
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
         "IncomeLossBeforeIncomeTaxes",
     ], True, 1),
 
-    ("  Income Tax Expense / (Benefit)", [
+    ("Income Tax Expense / (Benefit)", [
         "IncomeTaxExpenseBenefit",
         "IncomeTaxesPaidNet",
         "CurrentIncomeTaxExpenseBenefit",
-    ], False, 2),
+    ], False, 1),
 
     ("  Effective Tax Rate (%)", [], False, 2),  # computed
 
@@ -378,11 +380,11 @@ INCOME_SCHEMA: List[Tuple] = [
         "IncomeLossFromContinuingOperationsBeforeExtraordinaryItemsAndCumulativeEffectOfAccountingChanges",
     ], False, 1),
 
-    ("  Discontinued Operations", [
+    ("Discontinued Operations", [
         "IncomeLossFromDiscontinuedOperationsNetOfTax",
         "IncomeLossFromDiscontinuedOperationsNetOfTaxAttributableToReportingEntity",
         "DiscontinuedOperationIncomeLossFromDiscontinuedOperationDuringPhaseOutPeriodNetOfTax",
-    ], False, 2),
+    ], False, 1),
 
     ("Net Income", [
         "NetIncomeLoss",
@@ -1049,14 +1051,11 @@ CASH_FLOW_SCHEMA: List[Tuple] = [
         "NetCashProvidedByUsedInFinancingActivitiesContinuingOperations",
     ], True, 1),
 
-    # ══ SUMMARY ════════════════════════════════════════════════════════════════
-    ("SUMMARY", [], False, 0),
-
-    ("  FX Effect on Cash", [
+    ("FX Effect on Cash", [
         "EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
         "EffectOfExchangeRateOnCashAndCashEquivalents",
         "EffectOfExchangeRateOnCash",
-    ], False, 2),
+    ], False, 1),
 
     ("Net Change in Cash", [
         "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect",
@@ -1074,6 +1073,10 @@ CASH_FLOW_SCHEMA: List[Tuple] = [
         "IncomeTaxesPaid",
         "IncomeTaxesPaidNet",
     ], False, 2),
+
+    ("Free Cash Flow", [], True, 1),      # computed: CFO − |CapEx|
+    ("  FCF Margin (%)", [], False, 2),   # computed
+    ("  FCF / Net Income (%)", [], False, 2),  # computed
 ]
 
 
@@ -1086,10 +1089,10 @@ _YF_IS: Dict[str, str] = {
     "  SG&A (Combined)":                    "Selling General And Administration",
     "  General & Administrative":           "General And Administrative Expense",
     "Operating Income (EBIT)":              "Operating Income",
-    "  Interest Expense":                   "Interest Expense",
-    "  Interest Income":                    "Interest Income",
+    "Interest Expense":                     "Interest Expense",
+    "Interest Income":                      "Interest Income",
     "Income Before Tax":                    "Pretax Income",
-    "  Income Tax Expense / (Benefit)":     "Tax Provision",
+    "Income Tax Expense / (Benefit)":       "Tax Provision",
     "Net Income from Cont. Operations":     "Net Income Continuous Operations",
     "Net Income":                           "Net Income",
     "EPS — Basic":                          "Basic EPS",
@@ -1354,7 +1357,7 @@ def _inject_is_computed(df: pd.DataFrame, src: Dict[str, str]) -> None:
                 src["EBITDA"]    = "calc"
     if "  Effective Tax Rate (%)" in df.index:
         ebt = df.loc["Income Before Tax"] if "Income Before Tax" in df.index else None
-        tax = df.loc["  Income Tax Expense / (Benefit)"] if "  Income Tax Expense / (Benefit)" in df.index else None
+        tax = df.loc["Income Tax Expense / (Benefit)"] if "Income Tax Expense / (Benefit)" in df.index else None
         if ebt is not None and tax is not None:
             rate = tax.abs().div(ebt.abs().replace(0, np.nan)) * 100
             df.loc["  Effective Tax Rate (%)"] = rate
