@@ -292,6 +292,23 @@ INCOME_SCHEMA: List[Tuple] = [
         "IncomeLossFromContinuingOperationsBeforeInterestExpenseInterestIncomeIncomeTaxesExtraordinaryItemsNoncontrollingInterestsNet",
     ], True, 1),
 
+    ("EBITDA", [], True, 1),  # computed: EBIT + D&A
+
+    ("  Depreciation & Amortization", [
+        "DepreciationAndAmortization",
+        "DepreciationDepletionAndAmortization",
+        "Depreciation",
+        "DepreciationAmortizationAndAccretionNet",
+        "DepreciationNonproduction",
+    ], False, 2),
+
+    ("  Stock-Based Compensation", [
+        "ShareBasedCompensation",
+        "AllocatedShareBasedCompensationExpense",
+        "ShareBasedCompensationExpense",
+        "EmployeeBenefitsAndShareBasedCompensation",
+    ], False, 2),
+
     # ── BELOW OPERATING LINE ──────────────────────────────────────────────────
     ("  Interest Expense", [
         "InterestExpense",
@@ -389,32 +406,6 @@ INCOME_SCHEMA: List[Tuple] = [
         "PreferredStockDividendsAndOtherAdjustments",
         "DividendsPreferredStock",
         "DividendsPreferredStockCash",
-    ], False, 2),
-
-    # ── NON-CASH & KEY METRICS ────────────────────────────────────────────────
-    ("NON-CASH & KEY METRICS", [], False, 0),
-
-    ("EBITDA", [], True, 1),  # computed: EBIT + D&A
-
-    ("  Depreciation & Amortization", [
-        "DepreciationAndAmortization",
-        "DepreciationDepletionAndAmortization",
-        "Depreciation",
-        "DepreciationAmortizationAndAccretionNet",
-        "DepreciationNonproduction",
-    ], False, 2),
-
-    ("  Stock-Based Compensation", [
-        "ShareBasedCompensation",
-        "AllocatedShareBasedCompensationExpense",
-        "ShareBasedCompensationExpense",
-        "EmployeeBenefitsAndShareBasedCompensation",
-    ], False, 2),
-
-    ("  Capital Expenditures (IS context)", [
-        "PaymentsToAcquirePropertyPlantAndEquipment",
-        "PaymentsToAcquireProductiveAssets",
-        "CapitalExpenditures",
     ], False, 2),
 
     # ── PER SHARE ─────────────────────────────────────────────────────────────
@@ -1123,7 +1114,6 @@ _YF_IS: Dict[str, str] = {
     "EBITDA":                               "EBITDA",
     "  Depreciation & Amortization":        "Reconciled Depreciation",
     "  Stock-Based Compensation":           "Stock Based Compensation",
-    "  Capital Expenditures (IS context)":  "Capital Expenditure",
 }
 _YF_BS: Dict[str, str] = {
     "  Cash & Cash Equivalents":            "Cash And Cash Equivalents",
