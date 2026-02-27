@@ -238,16 +238,6 @@ INCOME_SCHEMA: List[Tuple] = [
         "AmortizationOfCapitalizedCostsToObtainContracts",
     ], False, 2),
 
-    ("  Depreciation & Amortization", [
-        "DepreciationAndAmortization",
-        "DepreciationDepletionAndAmortization",
-        "Depreciation",
-        "DepreciationAmortizationAndAccretionNet",
-        "DepreciationNonproduction",
-    ], False, 2),
-
-    ("EBITDA", [], True, 1),  # computed: EBIT + D&A
-
     ("  Stock-Based Compensation", [
         "ShareBasedCompensation",
         "AllocatedShareBasedCompensationExpense",
@@ -310,6 +300,16 @@ INCOME_SCHEMA: List[Tuple] = [
         "OperatingIncome",
         "IncomeLossFromContinuingOperationsBeforeInterestExpenseInterestIncomeIncomeTaxesExtraordinaryItemsNoncontrollingInterestsNet",
     ], True, 1),
+
+    ("  Depreciation & Amortization", [
+        "DepreciationAndAmortization",
+        "DepreciationDepletionAndAmortization",
+        "Depreciation",
+        "DepreciationAmortizationAndAccretionNet",
+        "DepreciationNonproduction",
+    ], False, 2),
+
+    ("EBITDA", [], True, 1),  # computed: EBIT + D&A
 
     # ── BELOW OPERATING LINE ──────────────────────────────────────────────────
     ("Interest Expense", [
