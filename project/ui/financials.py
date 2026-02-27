@@ -292,8 +292,6 @@ INCOME_SCHEMA: List[Tuple] = [
         "IncomeLossFromContinuingOperationsBeforeInterestExpenseInterestIncomeIncomeTaxesExtraordinaryItemsNoncontrollingInterestsNet",
     ], True, 1),
 
-    ("EBITDA", [], True, 1),  # computed: EBIT + D&A
-
     ("  Depreciation & Amortization", [
         "DepreciationAndAmortization",
         "DepreciationDepletionAndAmortization",
@@ -301,6 +299,8 @@ INCOME_SCHEMA: List[Tuple] = [
         "DepreciationAmortizationAndAccretionNet",
         "DepreciationNonproduction",
     ], False, 2),
+
+    ("EBITDA", [], True, 1),  # computed: EBIT + D&A
 
     ("  Stock-Based Compensation", [
         "ShareBasedCompensation",
