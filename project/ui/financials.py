@@ -1380,8 +1380,8 @@ def _inject_is_computed(df: pd.DataFrame, src: Dict[str, str]) -> None:
                 df.loc["EBITDA"] = comp
                 src["EBITDA"]    = "calc"
     if "  Effective Tax Rate (%)" in df.index:
-        ebt = df.loc.get("Income Before Tax")
-        tax = df.loc.get("  Income Tax Expense / (Benefit)")
+        ebt = df.loc["Income Before Tax"] if "Income Before Tax" in df.index else None
+        tax = df.loc["  Income Tax Expense / (Benefit)"] if "  Income Tax Expense / (Benefit)" in df.index else None
         if ebt is not None and tax is not None:
             rate = tax.abs().div(ebt.abs().replace(0, np.nan)) * 100
             df.loc["  Effective Tax Rate (%)"] = rate
