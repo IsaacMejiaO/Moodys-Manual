@@ -1475,7 +1475,7 @@ def _render_table(
     if df.empty:
         return "<p style='color:rgba(255,255,255,.35)'>No data available.</p>"
 
-    cols = list(df.columns)   # oldest → newest (left → right), newest on right
+    cols = list(reversed(df.columns))   # newest → oldest (left → right)
     hdrs = [c.strftime("FY%Y") for c in cols]
 
     h = f'<th class="hl">{unit_lbl}</th>' + "".join(f'<th class="hy">{y}</th>' for y in hdrs)
@@ -1508,16 +1508,6 @@ def _render_table(
             cells += f'<td class="{vcls}">{txt}</td>'
         html += f'<tr class="{row_cls}">{cells}</tr>'
 
-        # YoY growth row
-        if label in _GROWTH_ROWS and len(cols) >= 2:
-            gc = '<td class="tl" style="padding-left:20px;font-style:italic;font-size:10px;">YoY</td>'
-            for i, col in enumerate(cols):
-                if i == 0:
-                    gc += '<td class="vna">—</td>'
-                else:
-                    txt, vcls = _fmt_yoy(row[col], row[cols[i-1]])
-                    gc += f'<td class="{vcls}" style="font-size:10px;">{txt}</td>'
-            html += f'<tr class="ry">{gc}</tr>'
 
     return html + "</tbody></table></div>"
 
