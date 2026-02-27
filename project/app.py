@@ -56,9 +56,9 @@ from sec_engine.ltm import extract_quarterly_series, extract_annual_series
 from sec_engine.aggregation import build_company_summary
 
 from ui.tearsheet import render_tearsheet
+from ui.financials import render_financials
 from ui.multiples import render_multiples
 from ui.ratios import render_ratios
-from ui.financials import render_financials
 from ui.performance import render_performance, load_transactions_from_csv
 
 # ---------------------------------------------------------
@@ -786,7 +786,7 @@ st.session_state["company_df"] = df
 st.sidebar.markdown("---")
 
 selected_ticker = st.session_state.get("selected_ticker")
-show_ticker_selector = current_page in {"dashboard", "tearsheet", "multiples", "ratios", "financials"}
+show_ticker_selector = current_page in {"dashboard", "tearsheet", "financials", "multiples", "ratios"}
 
 if st.sidebar.button("Data", width="stretch", type="primary" if current_page == "data_controls" else "secondary"):
     st.session_state["page"] = "data_controls"
@@ -804,6 +804,13 @@ if st.sidebar.button("Tearsheet", width="stretch", type="primary" if current_pag
     else:
         st.sidebar.warning("Click a ticker row in the Screener first.")
 
+if st.sidebar.button("Financials", width="stretch", type="primary" if current_page == "financials" else "secondary"):
+    if selected_ticker:
+        st.session_state["page"] = "financials"
+        st.rerun()
+    else:
+        st.sidebar.warning("Click a ticker row in the Screener first.")
+
 if st.sidebar.button("Multiples", width="stretch", type="primary" if current_page == "multiples" else "secondary"):
     if selected_ticker:
         st.session_state["page"] = "multiples"
@@ -814,13 +821,6 @@ if st.sidebar.button("Multiples", width="stretch", type="primary" if current_pag
 if st.sidebar.button("Ratios", width="stretch", type="primary" if current_page == "ratios" else "secondary"):
     if selected_ticker:
         st.session_state["page"] = "ratios"
-        st.rerun()
-    else:
-        st.sidebar.warning("Click a ticker row in the Screener first.")
-
-if st.sidebar.button("Financials", width="stretch", type="primary" if current_page == "financials" else "secondary"):
-    if selected_ticker:
-        st.session_state["page"] = "financials"
         st.rerun()
     else:
         st.sidebar.warning("Click a ticker row in the Screener first.")
@@ -1260,6 +1260,17 @@ elif st.session_state["page"] == "tearsheet":
         render_tearsheet(ticker=ticker)
 
 # =========================================================
+# FINANCIALS PAGE
+# =========================================================
+elif st.session_state["page"] == "financials":
+    ticker = st.session_state.get("selected_ticker")
+
+    if not ticker:
+        st.warning("No ticker selected.")
+    else:
+        render_financials(ticker=ticker)
+
+# =========================================================
 # MULTIPLES PAGE
 # =========================================================
 elif st.session_state["page"] == "multiples":
@@ -1280,17 +1291,6 @@ elif st.session_state["page"] == "ratios":
         st.warning("No ticker selected.")
     else:
         render_ratios(ticker=ticker)
-
-# =========================================================
-# FINANCIALS PAGE
-# =========================================================
-elif st.session_state["page"] == "financials":
-    ticker = st.session_state.get("selected_ticker")
-
-    if not ticker:
-        st.warning("No ticker selected.")
-    else:
-        render_financials(ticker=ticker)
 
 # =========================================================
 # PERFORMANCE TRACKING PAGE
