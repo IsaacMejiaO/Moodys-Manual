@@ -229,27 +229,67 @@ def _get_analyst_estimates(ticker: str) -> dict:
         _logger.warning("earnings_estimate failed for %s: %s", ticker, exc)
 
     # ── Recommendation trend ──────────────────────────────────────────────────
+    # yfinance 0.2.x: t.recommendations returns a DataFrame with a DatetimeIndex
+    # and columns: period, strongBuy, buy, hold, sell, strongSell  (or similar).
+    # t.recommendations_summary returns the same but with "period" as a column
+    # ("0m","1m","2m","3m") and count columns. We try both and normalise.
     try:
         rt = None
-        try:
-            rt = t.recommendations_summary
-        except Exception:
-            pass
-        if rt is None or (isinstance(rt, pd.DataFrame) and rt.empty):
+        for attr in ("recommendations_summary", "recommendations"):
             try:
-                rt = t.recommendations
+                candidate = getattr(t, attr, None)
+                if candidate is not None and isinstance(candidate, pd.DataFrame) and not candidate.empty:
+                    rt = candidate
+                    break
             except Exception:
-                pass
-        if rt is not None and isinstance(rt, pd.DataFrame) and not rt.empty:
-            result["rec_trend"] = rt.copy()
+                continue
+
+        if rt is not None:
+            rt = rt.copy()
+            rt.columns = [str(c) for c in rt.columns]
+
+            # If there's a "period" column, use it as the x-axis label index
+            if "period" in rt.columns:
+                rt = rt.set_index("period")
+
+            # Normalise column names: camelCase → Title Case
+            col_norm = {
+                "strongBuy":   "Strong Buy",
+                "strongbuy":   "Strong Buy",
+                "strong_buy":  "Strong Buy",
+                "buy":         "Buy",
+                "hold":        "Hold",
+                "sell":        "Sell",
+                "strongSell":  "Strong Sell",
+                "strongsell":  "Strong Sell",
+                "strong_sell": "Strong Sell",
+                "underperform":"Sell",
+            }
+            rt = rt.rename(columns={c: col_norm[c] for c in rt.columns if c in col_norm})
+            # Keep only the count columns we care about
+            keep = [c for c in ["Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"] if c in rt.columns]
+            rt = rt[keep]
+
+            if not rt.empty and len(keep) > 0:
+                result["rec_trend"] = rt
     except Exception as exc:
         _logger.warning("rec_trend failed for %s: %s", ticker, exc)
 
     # ── Upgrades / downgrades ─────────────────────────────────────────────────
+    # yfinance 0.2.x: DatetimeIndex named "Upgrades Downgrades" or "GradeDate",
+    # columns: Firm, ToGrade, FromGrade, Action
     try:
         ud = t.upgrades_downgrades
         if ud is not None and isinstance(ud, pd.DataFrame) and not ud.empty:
-            result["upgrades_downgrades"] = ud.copy()
+            ud = ud.copy()
+            # Always reset the index so the date becomes a plain column
+            ud = ud.reset_index()
+            # Normalise ALL column names to lowercase_underscore
+            ud.columns = [
+                str(c).lower().replace(" ", "_").replace("-", "_")
+                for c in ud.columns
+            ]
+            result["upgrades_downgrades"] = ud
     except Exception as exc:
         _logger.warning("upgrades_downgrades failed for %s: %s", ticker, exc)
 
@@ -699,36 +739,31 @@ def _chart_revenue_earnings(ticker: str) -> Optional[go.Figure]:
 def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figure]:
     """
     Stacked bar chart of analyst recommendation counts by period.
-    Expects columns like: strongBuy / strongbuy, buy, hold, sell / strongSell.
-    Returns None if data is unavailable.
+    Expects a DataFrame whose columns are already normalised to
+    Title Case ("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell")
+    by _get_analyst_estimates.  Index may be period strings ("0m".."3m"),
+    dates, or integers.
     """
     if rec_trend is None or rec_trend.empty:
         return None
 
     df = rec_trend.copy()
-    df.columns = [c.lower() for c in df.columns]
 
-    # Normalise column names to consistent keys
-    col_map = {
-        "strongbuy":  "Strong Buy",  "strong_buy":  "Strong Buy",
-        "buy":        "Buy",
-        "hold":       "Hold",
-        "sell":       "Sell",
-        "strongsell": "Strong Sell", "strong_sell": "Strong Sell",
-        "underperform": "Sell",
-    }
-    rename = {c: col_map[c] for c in df.columns if c in col_map}
-    df = df.rename(columns=rename)
-    df = df[[c for c in ["Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"] if c in df.columns]]
-
-    if df.empty:
+    # Keep only the rating columns that exist
+    rating_cols = [c for c in ["Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"] if c in df.columns]
+    if not rating_cols:
         return None
+    df = df[rating_cols]
 
-    # Period label: use index if it's a date/string, else enumerate
-    if hasattr(df.index, "strftime"):
+    # Convert period index ("0m","1m","2m","3m") → "Current","1 Mo Ago", etc.
+    _period_label = {"0m": "Current", "1m": "1 Mo Ago", "2m": "2 Mo Ago", "3m": "3 Mo Ago"}
+    idx = df.index.tolist()
+    if all(str(i) in _period_label for i in idx):
+        labels = [_period_label[str(i)] for i in idx]
+    elif hasattr(df.index, "strftime"):
         labels = df.index.strftime("%b '%y").tolist()
     else:
-        labels = [str(i) for i in df.index]
+        labels = [str(i) for i in idx]
 
     colors = {
         "Strong Buy":  "#00C805",
@@ -739,7 +774,7 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
     }
 
     fig = go.Figure()
-    for col in df.columns:
+    for col in rating_cols:
         fig.add_trace(go.Bar(
             name=col, x=labels, y=df[col].tolist(),
             marker_color=colors.get(col, "#888"),
@@ -855,8 +890,12 @@ def _chart_analyst_price_targets(pt: dict, current_price: float) -> Optional[go.
 def _render_latest_ratings(upgrades_downgrades: pd.DataFrame) -> None:
     """
     Render the single most recent analyst rating action as a compact
-    single-column label / value list — no header, no table header row.
-    Fields: Date, Analyst (Firm), Action, Rating, Price Action, Price Target.
+    single-column label / value list.
+    Expects the DataFrame produced by _get_analyst_estimates:
+      - index already reset (date is a plain column)
+      - all columns lowercased + underscored
+      - yfinance 0.2.x columns: upgrades_downgrades (date), firm, tograde,
+        fromgrade, action
     """
     if upgrades_downgrades is None or upgrades_downgrades.empty:
         st.markdown(
@@ -866,20 +905,18 @@ def _render_latest_ratings(upgrades_downgrades: pd.DataFrame) -> None:
         return
 
     df = upgrades_downgrades.copy()
-    df.columns = [c.lower().replace(" ", "_") for c in df.columns]
 
-    # Lift date index into a column
-    if df.index.name and "date" in str(df.index.name).lower():
-        df = df.reset_index()
-        df.columns = [c.lower().replace(" ", "_") for c in df.columns]
-
+    # Column name aliases — yfinance varies across versions
     def _find(aliases):
         for a in aliases:
             if a in df.columns:
                 return a
         return None
 
-    date_col   = _find(["date", "gradedate", "grade_date"])
+    # Date column: after reset_index the old DatetimeIndex name becomes a column.
+    # yfinance names it "Upgrades Downgrades" → normalised to "upgrades_downgrades",
+    # or "GradeDate" → "gradedate", or simply "date".
+    date_col   = _find(["upgrades_downgrades", "gradedate", "grade_date", "date"])
     firm_col   = _find(["firm", "company"])
     action_col = _find(["action"])
     from_col   = _find(["fromgrade", "from_grade"])
@@ -901,15 +938,13 @@ def _render_latest_ratings(upgrades_downgrades: pd.DataFrame) -> None:
         s = str(v).strip()
         return s if s.lower() not in ("nan", "none", "") else "—"
 
-    date_str   = row[date_col].strftime("%b %d, %Y") if date_col and pd.notna(row.get(date_col)) else "—"
-    firm_str   = _str(firm_col)
-    action_str = _str(action_col)
-    from_str   = _str(from_col)
-    to_str     = _str(to_col)
-    pt_str     = _fmt_price(_safe(row.get(pt_col, np.nan))) if pt_col else "—"
-
-    # Price action: derive from from/to if action not explicit
-    price_action = action_str if action_str != "—" else "—"
+    date_str     = row[date_col].strftime("%b %d, %Y") if date_col and pd.notna(row.get(date_col)) else "—"
+    firm_str     = _str(firm_col)
+    action_str   = _str(action_col)
+    from_str     = _str(from_col)
+    to_str       = _str(to_col)
+    pt_str       = _fmt_price(_safe(row.get(pt_col, np.nan))) if pt_col else "—"
+    price_action = action_str  # same field; yfinance does not expose a separate price-action
 
     def _rating_col(val):
         v = str(val).lower()
@@ -921,7 +956,7 @@ def _render_latest_ratings(upgrades_downgrades: pd.DataFrame) -> None:
             return ORANGE
         return "#fff"
 
-    def _action_col(val):
+    def _action_col_color(val):
         v = str(val).lower()
         if "upgrade" in v or "init" in v:
             return UP
@@ -932,12 +967,12 @@ def _render_latest_ratings(upgrades_downgrades: pd.DataFrame) -> None:
         return "rgba(255,255,255,0.6)"
 
     rows = [
-        ("Date",         date_str,     "#fff"),
-        ("Analyst",      firm_str,     "#fff"),
-        ("Action",       action_str,   _action_col(action_str)),
-        ("Rating",       to_str,       _rating_col(to_str)),
-        ("Price Action", price_action, _action_col(price_action)),
-        ("Price Target", pt_str,       "#fff"),
+        ("Date",         date_str,   "#fff"),
+        ("Analyst",      firm_str,   "#fff"),
+        ("Action",       action_str, _action_col_color(action_str)),
+        ("Rating",       to_str,     _rating_col(to_str)),
+        ("Price Action", price_action, _action_col_color(price_action)),
+        ("Price Target", pt_str,     "#fff"),
     ]
 
     html = '<div style="margin-top:4px;">'
