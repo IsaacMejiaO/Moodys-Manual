@@ -1279,10 +1279,9 @@ def render_dcf(
     # ─────────────────────────────────────────────────────────────────────────
     # TABS
     # ─────────────────────────────────────────────────────────────────────────
-    tab_your, tab_street, tab_charts = st.tabs([
+    tab_your, tab_street = st.tabs([
         "Your Model",
         "Wall St. Consensus",
-        "Charts",
     ])
 
     # ── Tab: Your Model ───────────────────────────────────────────────────────
@@ -1319,56 +1318,6 @@ def render_dcf(
             terminal_g,
         )
 
-    # ── Tab: Charts ───────────────────────────────────────────────────────────
-    with tab_charts:
-        # ── Row 0: Revenue vs Earnings (Annual) ──────────────────────────────
-        rev_earn_fig = _chart_revenue_earnings(ticker)
-        if rev_earn_fig:
-            st.markdown(
-                '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
-                'color:rgba(255,255,255,.35);margin-bottom:4px;">Revenue vs Earnings (Annual)</p>',
-                unsafe_allow_html=True,
-            )
-            st.plotly_chart(rev_earn_fig, use_container_width=True, config={"displayModeBar": False})
-            st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
-
-        cc1, cc2 = st.columns(2, gap="large")
-        with cc1:
-            st.markdown(
-                '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
-                'color:rgba(255,255,255,.35);margin-bottom:4px;">PV of Cash Flows by Year — Your Model</p>',
-                unsafe_allow_html=True,
-            )
-            st.plotly_chart(_chart_waterfall(result, assumptions),
-                            use_container_width=True, config={"displayModeBar": False})
-        with cc2:
-            st.markdown(
-                '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
-                'color:rgba(255,255,255,.35);margin-bottom:4px;">Revenue · EBITDA · Unlevered FCF — Your Model</p>',
-                unsafe_allow_html=True,
-            )
-            st.plotly_chart(_chart_revenue_fcf(result, assumptions),
-                            use_container_width=True, config={"displayModeBar": False})
-
-        st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
-
-        sc1, sc2 = st.columns(2, gap="large")
-        with sc1:
-            st.markdown(
-                '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
-                'color:rgba(255,255,255,.35);margin-bottom:4px;">PV of Cash Flows by Year — Street Consensus</p>',
-                unsafe_allow_html=True,
-            )
-            st.plotly_chart(_chart_waterfall(street_result, street_asm),
-                            use_container_width=True, config={"displayModeBar": False})
-        with sc2:
-            st.markdown(
-                '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
-                'color:rgba(255,255,255,.35);margin-bottom:4px;">Revenue · EBITDA · Unlevered FCF — Street Consensus</p>',
-                unsafe_allow_html=True,
-            )
-            st.plotly_chart(_chart_revenue_fcf(street_result, street_asm),
-                            use_container_width=True, config={"displayModeBar": False})
 
 
 # Backwards-compatibility alias
