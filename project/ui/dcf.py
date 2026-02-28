@@ -405,86 +405,119 @@ def _render_tv_cards(result, assumptions: DCFAssumptions, wacc: float, terminal_
         )
 
 
-def _render_wacc_bridge(result, assumptions: DCFAssumptions,
-                        rf_rate, beta_val, erp, ke, kd, wacc,
-                        cod, tax_rate, debt_w, current_price,
-                        beta_result: BetaResult) -> None:
-    """WACC component build + equity value bridge (shared renderer)."""
+def _render_equity_value_bridge(result, assumptions: DCFAssumptions,
+                                rf_rate, beta_val, erp, ke, kd, wacc,
+                                cod, tax_rate, debt_w, current_price,
+                                beta_result: BetaResult,
+                                terminal_g: float) -> None:
+    """Full Street Equity Value Bridge: WACC inputs + valuation bridge side by side."""
+
+    # ── Derived intermediates ─────────────────────────────────────────────────
+    equity_w      = 1.0 - debt_w
+    terminal_rf   = rf_rate          # terminal risk-free (same rate by default)
+    terminal_capm = terminal_rf + beta_val * erp
+    terminal_wacc = terminal_capm * equity_w + kd * debt_w
+
+    total_debt    = assumptions.net_debt + (
+        # approximate: net_debt = total_debt - cash;
+        # we keep total_debt as net_debt for simplicity when cash is unknown
+        0.0
+    )
+    # Use stored values where available, fall back to net_debt proxy
+    _total_debt   = getattr(assumptions, "total_debt", assumptions.net_debt)
+    _cash         = getattr(assumptions, "cash",       max(0.0, -assumptions.net_debt))
+    _other_claims = getattr(assumptions, "other_claims", 0.0)
+
+    mkt_cap       = result.equity_value
+    shares        = assumptions.shares_outstanding
+    implied_price = result.intrinsic_price
+
+    # ── Undervalued / Overvalued label ────────────────────────────────────────
+    if not np.isnan(implied_price) and not np.isnan(current_price) and current_price > 0:
+        upside_pct = (implied_price - current_price) / current_price * 100
+        uv_label   = f"{'Undervalued' if upside_pct >= 0 else 'Overvalued'} {abs(upside_pct):.1f}%"
+        uv_color   = UP if upside_pct >= 0 else DOWN
+    else:
+        uv_label   = "—"
+        uv_color   = "rgba(255,255,255,.4)"
+
+    # ── Layout: two columns ───────────────────────────────────────────────────
     wc1, wc2 = st.columns(2, gap="large")
 
-    with wc1:
-        st.markdown('<p class="cfg-label" style="margin-bottom:10px;">WACC Build</p>', unsafe_allow_html=True)
-        wacc_rows = [
-            ("Risk-Free Rate",          f"{rf_rate:.2%}",    "10yr UST yield"),
-            ("× Beta (β)",              f"{beta_val:.2f}x",  f"{beta_result.method.capitalize()} method"),
-            ("× Equity Risk Premium",   f"{erp:.2%}",        "Damodaran implied ERP"),
-            ("= Cost of Equity (Ke)",   f"{ke:.2%}",         "Ke = Rf + β × ERP"),
-            ("", "", ""),
-            ("Cost of Debt (pre-tax)",  f"{cod:.2%}",        "Interest / total debt"),
-            ("× (1 – Tax Rate)",        f"{1-tax_rate:.2%}", f"After-tax at {tax_rate:.0%}"),
-            ("= Cost of Debt (Kd)",     f"{kd:.2%}",         "After-tax cost of debt"),
-            ("", "", ""),
-            ("Equity Weight",           f"{(1-debt_w):.0%}", "Market cap / total capital"),
-            ("Debt Weight",             f"{debt_w:.0%}",     "Total debt / total capital"),
-            ("= WACC",                  f"{wacc:.2%}",       "Ke×We + Kd×Wd"),
-        ]
-        for lbl, val, note in wacc_rows:
-            if not lbl:
-                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                continue
-            is_r  = lbl.startswith("=")
-            color = "#fff" if is_r else "rgba(255,255,255,.8)"
-            wgt   = "700"  if is_r else "400"
-            st.markdown(
-                f'<div style="display:flex;justify-content:space-between;align-items:baseline;'
-                f'padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);">'
-                f'<span style="font-size:12.5px;color:{color};font-weight:{wgt};">{lbl}</span>'
-                f'<span style="font-size:13px;font-weight:700;color:{BLUE if is_r else "#fff"};">{val}'
-                f'<span style="font-size:10px;font-weight:400;color:rgba(255,255,255,.3);margin-left:8px;">{note}</span>'
-                f'</span></div>',
-                unsafe_allow_html=True,
-            )
+    def _row(lbl, val_str, note="", is_result=False, color=None):
+        c  = color or ("#fff" if is_result else "rgba(255,255,255,.8)")
+        w  = "700" if is_result else "400"
+        vc = color or (BLUE if is_result else "#fff")
+        return (
+            f'<div style="display:flex;justify-content:space-between;align-items:baseline;'
+            f'padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);">'
+            f'<span style="font-size:12.5px;color:{c};font-weight:{w};">{lbl}</span>'
+            f'<span style="font-size:13px;font-weight:{w};color:{vc};">{val_str}'
+            f'<span style="font-size:10px;font-weight:400;color:rgba(255,255,255,.3);margin-left:8px;">{note}</span>'
+            f'</span></div>'
+        )
 
+    def _spacer():
+        return "<div style='height:8px'></div>"
+
+    # ── Left: WACC inputs ─────────────────────────────────────────────────────
+    with wc1:
+        st.markdown('<p class="cfg-label" style="margin-bottom:10px;">WACC Inputs</p>', unsafe_allow_html=True)
+        rows_left = "".join([
+            _row("Tax Rate",                    f"{tax_rate:.1%}",      "Effective / statutory"),
+            _row("Risk-Free Rate",               f"{rf_rate:.2%}",       "10yr UST yield"),
+            _row("Beta (β)",                     f"{beta_val:.2f}x",     f"{beta_result.method.capitalize()} method"),
+            _row("Market Risk Premium",          f"{erp:.2%}",           "Damodaran implied ERP"),
+            _spacer(),
+            _row("% Equity",                     f"{equity_w:.0%}",      "Market cap / total capital"),
+            _row("% Debt",                       f"{debt_w:.0%}",        "Total debt / total capital"),
+            _row("Cost of Debt",                 f"{cod:.2%}",           "Pre-tax cost of debt"),
+            _spacer(),
+            _row("= CAPM (Ke)",                  f"{ke:.2%}",            "Rf + β × ERP",              is_result=True),
+            _row("= WACC",                       f"{wacc:.2%}",          "Ke×We + Kd×Wd",             is_result=True),
+            _spacer(),
+            _row("Terminal Risk-Free Rate",      f"{terminal_rf:.2%}",   "Same as entry Rf"),
+            _row("Terminal CAPM",                f"{terminal_capm:.2%}", "Rf + β × ERP (terminal)"),
+            _row("= Terminal WACC",              f"{terminal_wacc:.2%}", "Terminal Ke×We + Kd×Wd",    is_result=True),
+            _spacer(),
+            _row("Terminal Growth Rate",         f"{terminal_g:.2%}",    "Perpetuity growth rate"),
+        ])
+        st.markdown(rows_left, unsafe_allow_html=True)
+
+    # ── Right: Equity Value Bridge ────────────────────────────────────────────
     with wc2:
         st.markdown('<p class="cfg-label" style="margin-bottom:10px;">Equity Value Bridge</p>', unsafe_allow_html=True)
-        bridge = [
-            ("Sum of PV (UFCF, Y1–Y10)",  result.sum_pv_ufcf,       f"{result.pv_ufcf_pct:.0f}% of EV"),
-            ("+ PV of Terminal Value",     result.pv_terminal_value, f"{result.pv_tv_pct:.0f}% of EV"),
-            ("= Enterprise Value",         result.enterprise_value,  "DCF-implied"),
-            ("", np.nan, ""),
-            ("– Net Debt",                 assumptions.net_debt,     "Total Debt – Cash"),
-            ("= Equity Value",             result.equity_value,      "EV – Net Debt"),
-            ("", np.nan, ""),
-            ("÷ Shares Outstanding",       assumptions.shares_outstanding, "Diluted"),
-            ("= Intrinsic Price per Share",result.intrinsic_price,   ""),
-            ("Current Market Price",       current_price,            ""),
-        ]
-        for lbl, val, note in bridge:
-            if not lbl:
-                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                continue
-            is_r    = lbl.startswith("=")
-            is_fin  = "Intrinsic Price" in lbl
-            color   = BLUE if is_fin else ("#fff" if is_r else "rgba(255,255,255,.8)")
-            wgt     = "800" if is_fin else ("700" if is_r else "400")
-            if isinstance(val, float) and not np.isnan(val):
-                if "÷" in lbl:
-                    vs = f"{val/1e6:,.1f}M"
-                elif abs(val) < 1000:
-                    vs = f"${val:,.2f}"
-                else:
-                    vs = _fmt_m(val)
-            else:
-                vs = "—"
-            st.markdown(
-                f'<div style="display:flex;justify-content:space-between;align-items:baseline;'
-                f'padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);">'
-                f'<span style="font-size:12.5px;color:{color};font-weight:{wgt};">{lbl}</span>'
-                f'<span style="font-size:13px;font-weight:700;color:{color};">{vs}'
-                f'<span style="font-size:10px;font-weight:400;color:rgba(255,255,255,.3);margin-left:8px;">{note}</span>'
-                f'</span></div>',
-                unsafe_allow_html=True,
-            )
+
+        def _fmt_bridge(v):
+            if isinstance(v, float) and np.isnan(v):
+                return "—"
+            if abs(v) < 1000:
+                return f"${v:,.2f}"
+            return _fmt_m(v)
+
+        def _fmt_shares(v):
+            if isinstance(v, float) and np.isnan(v):
+                return "—"
+            return f"{v/1e6:,.1f}M"
+
+        rows_right = "".join([
+            _row("Terminal Value",               _fmt_bridge(result.terminal_value),     "Undiscounted"),
+            _row("PV of Terminal Value",         _fmt_bridge(result.pv_terminal_value),  f"{result.pv_tv_pct:.0f}% of EV"),
+            _row("Sum of PV Free Cash Flows",    _fmt_bridge(result.sum_pv_ufcf),        f"{result.pv_ufcf_pct:.0f}% of EV"),
+            _row("= Enterprise Value",           _fmt_bridge(result.enterprise_value),   "DCF-implied",                      is_result=True),
+            _spacer(),
+            _row("– Total Debt",                 _fmt_bridge(_total_debt),               "Balance sheet"),
+            _row("– Other Claims of Value",      _fmt_bridge(_other_claims),             "Minorities / preferred"),
+            _row("+ Cash & Cash Equivalents",    _fmt_bridge(_cash),                     "Most recent"),
+            _row("= Market Capitalization",      _fmt_bridge(mkt_cap),                   "Implied equity value",             is_result=True),
+            _spacer(),
+            _row("÷ Fully Diluted Shares",       _fmt_shares(shares),                    "Diluted share count"),
+            _row("= Implied Price",              _fmt_bridge(implied_price),             "",                                 is_result=True),
+            _spacer(),
+            _row("Current Price",                _fmt_bridge(current_price),             "Market price"),
+            _row("Undervalued / Overvalued",     uv_label,                               "",                                 is_result=True, color=uv_color),
+        ])
+        st.markdown(rows_right, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -627,7 +660,7 @@ def render_dcf(
     )
     st.markdown(
         f'<p style="font-size:13px;color:rgba(255,255,255,.4);margin-top:0;margin-bottom:20px;">'
-        f'{name} &nbsp;·&nbsp; Valuation Model</p>',
+        f'Valuation Model</p>',
         unsafe_allow_html=True,
     )
 
@@ -844,55 +877,31 @@ def render_dcf(
     rat  = estimates.get("rating")
     n_an = estimates.get("n_analysts", 0)
 
-    if not np.isnan(result.intrinsic_price) and not np.isnan(current_price) and current_price > 0:
-        upside_pct = (result.intrinsic_price - current_price) / current_price * 100
-        upside_str = f"+{upside_pct:.1f}%" if upside_pct >= 0 else f"{upside_pct:.1f}%"
-        upside_cls = "up" if upside_pct >= 0 else "down"
-        upside_lbl = "Upside to Intrinsic" if upside_pct >= 0 else "Downside to Intrinsic"
-    else:
-        upside_pct = np.nan; upside_str = "—"; upside_cls = ""; upside_lbl = "vs. Intrinsic"
-
-    street_vs_dcf = ""
-    if not np.isnan(street_intrinsic) and not np.isnan(result.intrinsic_price):
-        diff = result.intrinsic_price - street_intrinsic
-        street_vs_dcf = f"Your model {'above' if diff >= 0 else 'below'} Street by {abs(diff/street_intrinsic)*100:.1f}%"
-
-    cards = '<div class="val-cards">'
-    cards += _card("Intrinsic Price (Your Model)", _fmt_price(result.intrinsic_price),
-                   street_vs_dcf or f"vs. {_fmt_price(current_price)} current", "highlight")
-    cards += _card(upside_lbl, upside_str, "", upside_cls)
-    cards += _card("Street DCF Implied", _fmt_price(street_intrinsic),
-                   f"{rat or '—'} · {n_an} analysts", "street")
-    cards += _card("Street Price Target", _fmt_price(mean_target),
-                   f"Low {_fmt_price(pt.get('low',np.nan))} / High {_fmt_price(pt.get('high',np.nan))}",
-                   "purple")
-    cards += _card("Enterprise Value", _fmt_m(result.enterprise_value), "Your model · DCF-implied", "")
-    cards += _card("WACC", f"{wacc:.2%}", f"Ke {ke:.2%} · Kd {kd:.2%}", "")
-    cards += _card("Terminal Value", f"{result.pv_tv_pct:.0f}% of EV",
-                   _fmt_m(result.pv_terminal_value), "orange")
-    cards += '</div>'
-    st.markdown(cards, unsafe_allow_html=True)
+    # (top summary cards removed — see Street Equity Value Bridge in each tab)
 
     # ─────────────────────────────────────────────────────────────────────────
     # TABS
     # ─────────────────────────────────────────────────────────────────────────
-    tab_your, tab_street, tab_charts, tab_wacc = st.tabs([
+    tab_your, tab_street, tab_charts = st.tabs([
         "Your Model",
         "Wall St. Consensus",
         "Charts",
-        "WACC Bridge",
     ])
 
     # ── Tab: Your Model ───────────────────────────────────────────────────────
     with tab_your:
+        st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
         st.markdown(
-            '<p style="font-size:11.5px;color:rgba(255,255,255,.4);margin-top:8px;margin-bottom:12px;">'
-            '10-year projected income and free cash flow build based on your assumptions. All values in $B.</p>',
+            '<p class="cfg-label" style="margin-bottom:12px;">Street Equity Value Bridge</p>',
             unsafe_allow_html=True,
         )
-        st.markdown(_render_projection_table(result, assumptions), unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-        _render_tv_cards(result, assumptions, wacc, terminal_g)
+        _render_equity_value_bridge(
+            result, assumptions,
+            rf_rate, beta_val, erp,
+            ke, kd, wacc,
+            cod, tax_rate, debt_w, current_price, beta_result,
+            terminal_g,
+        )
 
     # ── Tab: Wall St. Consensus ───────────────────────────────────────────────
     with tab_street:
@@ -924,32 +933,16 @@ def render_dcf(
                 )
 
         st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
-
-        # Street assumptions summary
-        st.markdown(
-            f'<p style="font-size:11.5px;color:rgba(255,255,255,.5);margin-bottom:12px;">'
-            f'Consensus assumptions modeled through the same DCF engine: '
-            f'<b style="color:#fff;">Revenue growth Y1 {street_g1*100:+.1f}%</b>, '
-            f'<b style="color:#fff;">Y5 {street_g5*100:+.1f}%</b>, '
-            f'<b style="color:#fff;">EBITDA margin {street_em*100:.1f}%</b>. '
-            f'WACC, CapEx, D&A, and terminal growth are identical to your model.</p>',
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(_render_projection_table(street_result, street_asm), unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-        _render_tv_cards(street_result, street_asm, street_result.wacc, terminal_g)
-
-        st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
         st.markdown(
             '<p class="cfg-label" style="margin-bottom:12px;">Street Equity Value Bridge</p>',
             unsafe_allow_html=True,
         )
-        _render_wacc_bridge(
+        _render_equity_value_bridge(
             street_result, street_asm,
             rf_rate, beta_val, erp,
             street_result.cost_of_equity, street_result.cost_of_debt_aftertax, street_result.wacc,
             cod, tax_rate, debt_w, current_price, beta_result,
+            terminal_g,
         )
 
     # ── Tab: Charts ───────────────────────────────────────────────────────────
@@ -991,19 +984,6 @@ def render_dcf(
             )
             st.plotly_chart(_chart_revenue_fcf(street_result, street_asm),
                             use_container_width=True, config={"displayModeBar": False})
-
-    # ── Tab: WACC Bridge (Your Model) ─────────────────────────────────────────
-    with tab_wacc:
-        st.markdown(
-            '<p style="font-size:11.5px;color:rgba(255,255,255,.4);margin-top:8px;margin-bottom:16px;">'
-            'WACC component breakdown and equity value bridge for your model.</p>',
-            unsafe_allow_html=True,
-        )
-        _render_wacc_bridge(
-            result, assumptions,
-            rf_rate, beta_val, erp, ke, kd, wacc,
-            cod, tax_rate, debt_w, current_price, beta_result,
-        )
 
 
 # Backwards-compatibility alias
