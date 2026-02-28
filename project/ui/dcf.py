@@ -723,10 +723,10 @@ def _chart_revenue_earnings(ticker: str) -> Optional[go.Figure]:
             template="plotly_dark",
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-            margin=dict(l=0, r=0, t=24, b=0), height=280,
-            legend=dict(orientation="h", x=0, y=1.08, font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+            margin=dict(l=0, r=0, t=8, b=0), height=280,
+            showlegend=False,
             xaxis=dict(showgrid=False, tickfont=dict(size=11), type="category"),
-            yaxis=dict(title="$B", gridcolor="rgba(255,255,255,0.05)", tickformat="$.1f"),
+            yaxis=dict(title="", gridcolor="rgba(255,255,255,0.05)", tickformat="$.1f"),
             bargap=0.25, bargroupgap=0.08, hovermode="x unified",
         )
         return fig
@@ -738,14 +738,14 @@ def _chart_revenue_earnings(ticker: str) -> Optional[go.Figure]:
 
 def _chart_eps_history(ticker: str) -> Optional[go.Figure]:
     """
-    EPS (Earnings Per Share) bar chart — Yahoo Finance style.
-    Shows quarterly EPS actual vs estimate for recent quarters,
-    plus annual EPS for the last 4 fiscal years.
+    EPS dot/scatter chart — Yahoo Finance style.
+    Circles for Actual EPS, X markers for Estimate EPS.
+    No y-axis title. Dark-theme consistent styling.
     """
     try:
         t = yf.Ticker(ticker)
 
-        # Try quarterly earnings first (actual vs estimate)
+        # Try quarterly earnings (actual vs estimate)
         qe = None
         try:
             qe = t.quarterly_earnings
@@ -753,55 +753,79 @@ def _chart_eps_history(ticker: str) -> Optional[go.Figure]:
             pass
 
         if qe is not None and not qe.empty:
-            qe = qe.copy()
-            # index is quarter labels (e.g. "3Q2024"), columns: Earnings, Estimate
-            qe = qe.sort_index().tail(8)  # last 8 quarters
+            qe = qe.copy().sort_index().tail(8)
             x_labels = [str(i) for i in qe.index]
 
             fig = go.Figure()
 
+            # Estimate — hollow circle outline
             if "Estimate" in qe.columns:
-                est_vals = [_safe(v) / 1 for v in qe["Estimate"].tolist()]
-                fig.add_trace(go.Bar(
+                est_vals = [_safe(v) for v in qe["Estimate"].tolist()]
+                fig.add_trace(go.Scatter(
                     name="Estimate",
-                    x=x_labels,
-                    y=est_vals,
-                    marker_color="rgba(255,255,255,0.15)",
-                    marker_line=dict(color="rgba(255,255,255,0.30)", width=1),
+                    x=x_labels, y=est_vals,
+                    mode="markers+text",
+                    marker=dict(
+                        size=14,
+                        color="rgba(0,0,0,0)",
+                        line=dict(color="rgba(255,255,255,0.40)", width=2),
+                        symbol="circle",
+                    ),
                     text=[f"${v:.2f}" if not np.isnan(v) else "" for v in est_vals],
-                    textposition="outside",
-                    textfont=dict(size=9, color="rgba(255,255,255,0.45)"),
+                    textposition="top center",
+                    textfont=dict(size=9, color="rgba(255,255,255,0.40)"),
                     showlegend=True,
                 ))
 
+            # Actual — filled circle
             if "Earnings" in qe.columns:
-                act_vals = [_safe(v) / 1 for v in qe["Earnings"].tolist()]
-                fig.add_trace(go.Bar(
+                act_vals = [_safe(v) for v in qe["Earnings"].tolist()]
+                fig.add_trace(go.Scatter(
                     name="Actual",
-                    x=x_labels,
-                    y=act_vals,
-                    marker_color="rgba(10,124,255,0.70)",
-                    marker_line=dict(color="rgba(10,124,255,0.90)", width=1),
+                    x=x_labels, y=act_vals,
+                    mode="markers+text",
+                    marker=dict(
+                        size=14,
+                        color="rgba(10,124,255,0.85)",
+                        line=dict(color="rgba(10,124,255,1.0)", width=1),
+                        symbol="circle",
+                    ),
                     text=[f"${v:.2f}" if not np.isnan(v) else "" for v in act_vals],
-                    textposition="outside",
+                    textposition="bottom center",
                     textfont=dict(size=9, color="rgba(255,255,255,0.65)"),
                     showlegend=True,
                 ))
 
+            # Thin connector lines between estimate and actual per quarter
+            if "Estimate" in qe.columns and "Earnings" in qe.columns:
+                for xi, (e_v, a_v) in enumerate(zip(est_vals, act_vals)):
+                    if not np.isnan(e_v) and not np.isnan(a_v):
+                        fig.add_trace(go.Scatter(
+                            x=[x_labels[xi], x_labels[xi]],
+                            y=[e_v, a_v],
+                            mode="lines",
+                            line=dict(color="rgba(255,255,255,0.12)", width=1),
+                            showlegend=False, hoverinfo="skip",
+                        ))
+
             fig.update_layout(
-                barmode="group",
                 template="plotly_dark",
                 plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                 font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
                 margin=dict(l=0, r=0, t=24, b=0), height=280,
                 legend=dict(orientation="h", x=0, y=1.08, font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
                 xaxis=dict(showgrid=False, tickfont=dict(size=10), type="category"),
-                yaxis=dict(title="EPS ($)", gridcolor="rgba(255,255,255,0.05)", tickformat="$.2f"),
-                bargap=0.25, bargroupgap=0.08, hovermode="x unified",
+                yaxis=dict(
+                    title="",
+                    gridcolor="rgba(255,255,255,0.05)",
+                    tickformat="$.2f",
+                    zeroline=True, zerolinecolor="rgba(255,255,255,0.08)",
+                ),
+                hovermode="x unified",
             )
             return fig
 
-        # Fallback: annual EPS from financials
+        # Fallback: annual EPS dots
         fin = t.financials
         if fin is None or fin.empty:
             return None
@@ -815,11 +839,10 @@ def _chart_eps_history(ticker: str) -> Optional[go.Figure]:
                     return fin.loc[k]
             return None
 
-        eps_row = _get_row(["Diluted EPS", "Basic EPS", "EPS"])
-        ni_row  = _get_row(["Net Income", "Net Income Common Stockholders"])
+        eps_row    = _get_row(["Diluted EPS", "Basic EPS", "EPS"])
+        ni_row     = _get_row(["Net Income", "Net Income Common Stockholders"])
         shares_row = _get_row(["Diluted Average Shares", "Basic Average Shares"])
 
-        # Compute EPS if not direct
         if eps_row is None and ni_row is not None and shares_row is not None:
             eps_vals = []
             for c in cols:
@@ -834,15 +857,16 @@ def _chart_eps_history(ticker: str) -> Optional[go.Figure]:
         years = [str(c.year) for c in cols]
 
         fig = go.Figure()
-        fig.add_trace(go.Bar(
+        fig.add_trace(go.Scatter(
             name="EPS",
-            x=years,
-            y=eps_vals,
-            marker_color="rgba(10,124,255,0.70)",
-            marker_line=dict(color="rgba(10,124,255,0.90)", width=1),
+            x=years, y=eps_vals,
+            mode="markers+lines+text",
+            marker=dict(size=14, color="rgba(10,124,255,0.85)", symbol="circle"),
+            line=dict(color="rgba(10,124,255,0.40)", width=1.5),
             text=[f"${v:.2f}" if not np.isnan(v) else "" for v in eps_vals],
-            textposition="outside",
+            textposition="top center",
             textfont=dict(size=9.5, color="rgba(255,255,255,0.65)"),
+            showlegend=False,
         ))
 
         fig.update_layout(
@@ -850,10 +874,14 @@ def _chart_eps_history(ticker: str) -> Optional[go.Figure]:
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
             margin=dict(l=0, r=0, t=24, b=0), height=280,
-            legend=dict(orientation="h", x=0, y=1.08, font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
             xaxis=dict(showgrid=False, tickfont=dict(size=11), type="category"),
-            yaxis=dict(title="EPS ($)", gridcolor="rgba(255,255,255,0.05)", tickformat="$.2f"),
-            bargap=0.35, hovermode="x unified",
+            yaxis=dict(
+                title="",
+                gridcolor="rgba(255,255,255,0.05)",
+                tickformat="$.2f",
+                zeroline=True, zerolinecolor="rgba(255,255,255,0.08)",
+            ),
+            hovermode="x unified",
         )
         return fig
     except Exception:
@@ -943,11 +971,12 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
         template="plotly_dark",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-        margin=dict(l=0, r=0, t=28, b=0), height=270,
+        margin=dict(l=0, r=0, t=42, b=0), height=320,
         showlegend=False,
         xaxis=dict(showgrid=False, tickfont=dict(size=11)),
         yaxis=dict(title="", visible=False, gridcolor="rgba(255,255,255,0.05)", tickformat=".0f"),
-        bargap=0.25, hovermode="x unified",
+        bargap=0.30, hovermode="x unified",
+        uniformtext=dict(minsize=9, mode="hide"),
     )
     return fig
 
@@ -990,7 +1019,7 @@ def _chart_analyst_price_targets(pt: dict, current_price: float) -> Optional[go.
         fig.add_trace(go.Scatter(
             x=[mean], y=[0.5],
             mode="markers+text",
-            marker=dict(size=16, color=UP, symbol="diamond"),
+            marker=dict(size=16, color=UP, symbol="circle"),
             text=[_two_line("Mean Target", mean)],
             textposition="top center",
             textfont=dict(size=10, color=UP),
@@ -1036,7 +1065,7 @@ def _chart_analyst_price_targets(pt: dict, current_price: float) -> Optional[go.
         template="plotly_dark",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-        margin=dict(l=0, r=0, t=48, b=36), height=200,
+        margin=dict(l=0, r=0, t=48, b=36), height=320,
         showlegend=False,
         xaxis=dict(
             range=[x_min, x_max],
@@ -1336,7 +1365,7 @@ def render_dcf(
     # ─────────────────────────────────────────────────────────────────────────
     # ASSUMPTION EXPANDER  — Configure-optimizer style
     # ─────────────────────────────────────────────────────────────────────────
-    with st.expander("Model Assumptions", expanded=True):
+    with st.expander("Model Assumptions", expanded=False):
         col_g, col_m, col_w = st.columns([1, 1, 1], gap="large")
 
         with col_g:
