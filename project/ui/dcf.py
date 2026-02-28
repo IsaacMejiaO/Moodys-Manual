@@ -155,10 +155,9 @@ def _load_sic(cik: str) -> str:
 def _get_analyst_estimates(ticker: str) -> dict:
     """
     Pull Wall Street consensus from yfinance.
-    Returns keys: price_targets, rating, n_analysts,
-                  rev_growth_fwd, eps_growth_fwd, ebitda_margin,
-                  street_rev_g_y1, street_rev_g_y5, street_ebitda_m,
-                  rec_trend (DataFrame), upgrades_downgrades (DataFrame)
+    Every network call is individually guarded so that a YFRateLimitError
+    or any other transient failure degrades gracefully to empty/NaN values
+    rather than propagating an exception to the caller.
     """
     result = {
         "price_targets": {},
@@ -174,9 +173,19 @@ def _get_analyst_estimates(ticker: str) -> dict:
         "upgrades_downgrades": pd.DataFrame(),
     }
     try:
-        t    = yf.Ticker(ticker)
-        info = t.info or {}
+        t = yf.Ticker(ticker)
+    except Exception as exc:
+        _logger.warning("yf.Ticker(%s) failed: %s", ticker, exc)
+        return result
 
+    # ── .info ─────────────────────────────────────────────────────────────────
+    info = {}
+    try:
+        info = t.info or {}
+    except Exception as exc:
+        _logger.warning("yf.Ticker(%s).info failed: %s", ticker, exc)
+
+    if info:
         current = _safe(info.get("currentPrice") or info.get("regularMarketPrice"))
         result["price_targets"] = {
             "current": current,
@@ -193,53 +202,56 @@ def _get_analyst_estimates(ticker: str) -> dict:
         rec = info.get("recommendationKey", "")
         result["rating"] = _rec_map.get(rec.lower().replace(" ", "_"), rec.capitalize() if rec else None)
 
-        # EBITDA margin from info
         ebitda = info.get("ebitda")
         rev    = info.get("totalRevenue")
         if ebitda and rev and float(rev) > 0:
             result["ebitda_margin"]   = float(ebitda) / float(rev)
             result["street_ebitda_m"] = float(ebitda) / float(rev)
 
-        # Forward revenue growth from revenue_estimate
-        try:
-            rev_est = t.revenue_estimate
-            if rev_est is not None and not rev_est.empty and len(rev_est) >= 2:
-                g0 = _safe(rev_est.iloc[0].get("growth"))
-                g1 = _safe(rev_est.iloc[1].get("growth"))
-                result["rev_growth_fwd"]   = g0
-                result["street_rev_g_y1"]  = g0
-                result["street_rev_g_y5"]  = g1  # use year+2 as approximate Y5 fade target
-        except Exception:
-            pass
-
-        # EPS growth
-        try:
-            eps_est = t.earnings_estimate
-            if eps_est is not None and not eps_est.empty and len(eps_est) >= 2:
-                result["eps_growth_fwd"] = _safe(eps_est.iloc[1].get("growth"))
-        except Exception:
-            pass
-
-        # Recommendation trend (strong buy / buy / hold / sell counts by period)
-        try:
-            rt = t.recommendations_summary if hasattr(t, "recommendations_summary") else None
-            if rt is None or (isinstance(rt, pd.DataFrame) and rt.empty):
-                rt = t.recommendations if hasattr(t, "recommendations") else None
-            if rt is not None and isinstance(rt, pd.DataFrame) and not rt.empty:
-                result["rec_trend"] = rt.copy()
-        except Exception:
-            pass
-
-        # Upgrades / downgrades history
-        try:
-            ud = t.upgrades_downgrades if hasattr(t, "upgrades_downgrades") else None
-            if ud is not None and isinstance(ud, pd.DataFrame) and not ud.empty:
-                result["upgrades_downgrades"] = ud.copy()
-        except Exception:
-            pass
-
+    # ── Revenue estimate ──────────────────────────────────────────────────────
+    try:
+        rev_est = t.revenue_estimate
+        if rev_est is not None and not rev_est.empty and len(rev_est) >= 2:
+            g0 = _safe(rev_est.iloc[0].get("growth"))
+            g1 = _safe(rev_est.iloc[1].get("growth"))
+            result["rev_growth_fwd"]  = g0
+            result["street_rev_g_y1"] = g0
+            result["street_rev_g_y5"] = g1
     except Exception as exc:
-        _logger.warning("_get_analyst_estimates failed for %s: %s", ticker, exc)
+        _logger.warning("revenue_estimate failed for %s: %s", ticker, exc)
+
+    # ── EPS estimate ──────────────────────────────────────────────────────────
+    try:
+        eps_est = t.earnings_estimate
+        if eps_est is not None and not eps_est.empty and len(eps_est) >= 2:
+            result["eps_growth_fwd"] = _safe(eps_est.iloc[1].get("growth"))
+    except Exception as exc:
+        _logger.warning("earnings_estimate failed for %s: %s", ticker, exc)
+
+    # ── Recommendation trend ──────────────────────────────────────────────────
+    try:
+        rt = None
+        try:
+            rt = t.recommendations_summary
+        except Exception:
+            pass
+        if rt is None or (isinstance(rt, pd.DataFrame) and rt.empty):
+            try:
+                rt = t.recommendations
+            except Exception:
+                pass
+        if rt is not None and isinstance(rt, pd.DataFrame) and not rt.empty:
+            result["rec_trend"] = rt.copy()
+    except Exception as exc:
+        _logger.warning("rec_trend failed for %s: %s", ticker, exc)
+
+    # ── Upgrades / downgrades ─────────────────────────────────────────────────
+    try:
+        ud = t.upgrades_downgrades
+        if ud is not None and isinstance(ud, pd.DataFrame) and not ud.empty:
+            result["upgrades_downgrades"] = ud.copy()
+    except Exception as exc:
+        _logger.warning("upgrades_downgrades failed for %s: %s", ticker, exc)
 
     return result
 
@@ -1000,7 +1012,11 @@ def render_dcf(
     sic_code = _load_sic(cik) if cik else ""
     with st.spinner("Fetching market data & analyst estimates…"):
         estimates    = _get_analyst_estimates(ticker)
-    yf_info      = yf.Ticker(ticker).info or {} if True else {}
+    yf_info = {}
+    try:
+        yf_info = yf.Ticker(ticker).info or {}
+    except Exception as exc:
+        _logger.warning("yf_info fetch failed for %s: %s", ticker, exc)
     current_price = _safe(estimates["price_targets"].get("current", np.nan))
 
     meta = data.get("metadata", {})
