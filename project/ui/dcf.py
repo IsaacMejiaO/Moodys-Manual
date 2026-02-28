@@ -157,7 +157,8 @@ def _get_analyst_estimates(ticker: str) -> dict:
     Pull Wall Street consensus from yfinance.
     Returns keys: price_targets, rating, n_analysts,
                   rev_growth_fwd, eps_growth_fwd, ebitda_margin,
-                  street_rev_g_y1, street_rev_g_y5, street_ebitda_m
+                  street_rev_g_y1, street_rev_g_y5, street_ebitda_m,
+                  rec_trend (DataFrame), upgrades_downgrades (DataFrame)
     """
     result = {
         "price_targets": {},
@@ -169,6 +170,8 @@ def _get_analyst_estimates(ticker: str) -> dict:
         "street_rev_g_y1": np.nan,
         "street_rev_g_y5": np.nan,
         "street_ebitda_m": np.nan,
+        "rec_trend": pd.DataFrame(),
+        "upgrades_downgrades": pd.DataFrame(),
     }
     try:
         t    = yf.Ticker(ticker)
@@ -214,6 +217,24 @@ def _get_analyst_estimates(ticker: str) -> dict:
             eps_est = t.earnings_estimate
             if eps_est is not None and not eps_est.empty and len(eps_est) >= 2:
                 result["eps_growth_fwd"] = _safe(eps_est.iloc[1].get("growth"))
+        except Exception:
+            pass
+
+        # Recommendation trend (strong buy / buy / hold / sell counts by period)
+        try:
+            rt = t.recommendations_summary if hasattr(t, "recommendations_summary") else None
+            if rt is None or (isinstance(rt, pd.DataFrame) and rt.empty):
+                rt = t.recommendations if hasattr(t, "recommendations") else None
+            if rt is not None and isinstance(rt, pd.DataFrame) and not rt.empty:
+                result["rec_trend"] = rt.copy()
+        except Exception:
+            pass
+
+        # Upgrades / downgrades history
+        try:
+            ud = t.upgrades_downgrades if hasattr(t, "upgrades_downgrades") else None
+            if ud is not None and isinstance(ud, pd.DataFrame) and not ud.empty:
+                result["upgrades_downgrades"] = ud.copy()
         except Exception:
             pass
 
@@ -588,8 +609,293 @@ def _chart_revenue_fcf(result, assumptions: DCFAssumptions) -> go.Figure:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main render
+# Analyst section renderers
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figure]:
+    """
+    Stacked bar chart of analyst recommendation counts by period.
+    Expects columns like: strongBuy / strongbuy, buy, hold, sell / strongSell.
+    Returns None if data is unavailable.
+    """
+    if rec_trend is None or rec_trend.empty:
+        return None
+
+    df = rec_trend.copy()
+    df.columns = [c.lower() for c in df.columns]
+
+    # Normalise column names to consistent keys
+    col_map = {
+        "strongbuy":  "Strong Buy",  "strong_buy":  "Strong Buy",
+        "buy":        "Buy",
+        "hold":       "Hold",
+        "sell":       "Sell",
+        "strongsell": "Strong Sell", "strong_sell": "Strong Sell",
+        "underperform": "Sell",
+    }
+    rename = {c: col_map[c] for c in df.columns if c in col_map}
+    df = df.rename(columns=rename)
+    df = df[[c for c in ["Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"] if c in df.columns]]
+
+    if df.empty:
+        return None
+
+    # Period label: use index if it's a date/string, else enumerate
+    if hasattr(df.index, "strftime"):
+        labels = df.index.strftime("%b '%y").tolist()
+    else:
+        labels = [str(i) for i in df.index]
+
+    colors = {
+        "Strong Buy":  "#00C805",
+        "Buy":         "#34C759",
+        "Hold":        "#FF9F0A",
+        "Sell":        "#FF6B6B",
+        "Strong Sell": "#FF3B30",
+    }
+
+    fig = go.Figure()
+    for col in df.columns:
+        fig.add_trace(go.Bar(
+            name=col, x=labels, y=df[col].tolist(),
+            marker_color=colors.get(col, "#888"),
+            marker_line_width=0,
+        ))
+
+    fig.update_layout(
+        barmode="stack",
+        template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
+        margin=dict(l=0, r=0, t=8, b=0), height=260,
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.18,
+                    font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+        xaxis=dict(showgrid=False, tickfont=dict(size=10)),
+        yaxis=dict(title="# Analysts", gridcolor="rgba(255,255,255,0.05)", tickformat=".0f"),
+        bargap=0.25, hovermode="x unified",
+    )
+    return fig
+
+
+def _chart_analyst_price_targets(pt: dict, current_price: float) -> Optional[go.Figure]:
+    """
+    Horizontal range chart showing low / current / mean / high price targets
+    vs the current stock price — styled like a Yahoo Finance price target bar.
+    Returns None if targets are unavailable.
+    """
+    low  = _safe(pt.get("low",  np.nan))
+    mean = _safe(pt.get("mean", np.nan))
+    high = _safe(pt.get("high", np.nan))
+
+    if all(np.isnan(v) for v in [low, mean, high]):
+        return None
+
+    vals   = [v for v in [low, mean, high, current_price] if not np.isnan(v)]
+    x_min  = min(vals) * 0.88
+    x_max  = max(vals) * 1.12
+
+    fig = go.Figure()
+
+    # Range bar (low → high)
+    if not np.isnan(low) and not np.isnan(high):
+        fig.add_trace(go.Scatter(
+            x=[low, high], y=[0.5, 0.5],
+            mode="lines",
+            line=dict(color="rgba(255,255,255,0.15)", width=14),
+            showlegend=False, hoverinfo="skip",
+        ))
+
+    # Mean target marker
+    if not np.isnan(mean):
+        fig.add_trace(go.Scatter(
+            x=[mean], y=[0.5],
+            mode="markers+text",
+            marker=dict(size=16, color=UP, symbol="diamond"),
+            text=[f"<b>{_fmt_price(mean)}</b>"],
+            textposition="top center",
+            textfont=dict(size=11, color=UP),
+            name="Mean Target",
+        ))
+
+    # Low target
+    if not np.isnan(low):
+        fig.add_trace(go.Scatter(
+            x=[low], y=[0.5],
+            mode="markers+text",
+            marker=dict(size=10, color="rgba(255,255,255,0.55)", symbol="circle"),
+            text=[_fmt_price(low)],
+            textposition="bottom center",
+            textfont=dict(size=10, color="rgba(255,255,255,0.55)"),
+            name="Low Target",
+        ))
+
+    # High target
+    if not np.isnan(high):
+        fig.add_trace(go.Scatter(
+            x=[high], y=[0.5],
+            mode="markers+text",
+            marker=dict(size=10, color="rgba(255,255,255,0.55)", symbol="circle"),
+            text=[_fmt_price(high)],
+            textposition="bottom center",
+            textfont=dict(size=10, color="rgba(255,255,255,0.55)"),
+            name="High Target",
+        ))
+
+    # Current price vertical line
+    if not np.isnan(current_price):
+        fig.add_vline(
+            x=current_price,
+            line_width=2, line_dash="dash",
+            line_color="rgba(255,255,255,0.40)",
+            annotation_text=f"Current {_fmt_price(current_price)}",
+            annotation_position="top",
+            annotation_font=dict(size=10, color="rgba(255,255,255,0.55)"),
+        )
+
+    fig.update_layout(
+        template="plotly_dark",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
+        margin=dict(l=0, r=0, t=36, b=20), height=180,
+        showlegend=True,
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.15,
+                    font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+        xaxis=dict(range=[x_min, x_max], showgrid=False,
+                   tickformat="$,.0f", tickfont=dict(size=10)),
+        yaxis=dict(visible=False, range=[0, 1]),
+        hovermode="x unified",
+    )
+    return fig
+
+
+def _render_latest_ratings(upgrades_downgrades: pd.DataFrame) -> None:
+    """
+    Render a styled table of the most recent analyst rating actions —
+    Date, Firm, Action (Upgrade/Downgrade/Init/Reiterate), Rating, Price Target.
+    """
+    if upgrades_downgrades is None or upgrades_downgrades.empty:
+        st.markdown(
+            '<p style="font-size:12px;color:rgba(255,255,255,.35);margin-top:8px;">No recent rating actions available.</p>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    df = upgrades_downgrades.copy()
+    df.columns = [c.lower().replace(" ", "_") for c in df.columns]
+
+    # Normalise index to date column
+    if df.index.name and "date" in df.index.name.lower():
+        df = df.reset_index()
+        df.columns = [c.lower().replace(" ", "_") for c in df.columns]
+
+    # Map column names (yfinance varies across versions)
+    col_aliases = {
+        "date":        ["date", "gradedate", "grade_date"],
+        "firm":        ["firm", "tograde", "company"],
+        "action":      ["action", "fromgrade", "from_grade"],
+        "rating":      ["tograde", "to_grade", "grade", "rating"],
+        "price_target":["price_target", "pricetarget", "target_price"],
+    }
+
+    def _find_col(aliases):
+        for a in aliases:
+            if a in df.columns:
+                return a
+        return None
+
+    date_col   = _find_col(col_aliases["date"])
+    firm_col   = _find_col(["firm", "company"])
+    action_col = _find_col(["action"])
+    from_col   = _find_col(["fromgrade", "from_grade"])
+    to_col     = _find_col(["tograde", "to_grade", "grade"])
+    pt_col     = _find_col(col_aliases["price_target"])
+
+    # Parse and sort by date descending
+    if date_col:
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+        df = df.sort_values(date_col, ascending=False)
+
+    # Take most recent 15 rows
+    df = df.head(15)
+
+    # Action colour helper
+    _action_color = {
+        "upgrade":    UP,
+        "downgrade":  DOWN,
+        "init":       BLUE,
+        "initiated":  BLUE,
+        "reiterated": ORANGE,
+        "maintained": "rgba(255,255,255,0.55)",
+    }
+
+    def _action_badge(val):
+        if not val or str(val).lower() in ("nan", "none", ""):
+            return "—"
+        v = str(val).strip()
+        c = _action_color.get(v.lower(), "rgba(255,255,255,0.55)")
+        return (
+            f'<span style="display:inline-block;font-size:10px;font-weight:700;'
+            f'border-radius:4px;padding:2px 7px;'
+            f'background:{c}22;color:{c};border:1px solid {c}55;">{v}</span>'
+        )
+
+    def _rating_color(val):
+        if not val or str(val).lower() in ("nan", "none", ""):
+            return "rgba(255,255,255,0.55)"
+        v = str(val).lower()
+        if "strong buy" in v or "outperform" in v or "buy" in v or "overweight" in v:
+            return UP
+        if "sell" in v or "underperform" in v or "underweight" in v:
+            return DOWN
+        if "hold" in v or "neutral" in v or "market" in v:
+            return ORANGE
+        return "rgba(255,255,255,0.75)"
+
+    # Build HTML table
+    html = (
+        '<div class="fin-wrap" style="margin-top:8px;">'
+        '<table class="fin-table" style="font-size:12px;">'
+        '<thead><tr>'
+        '<th class="hl" style="text-align:left;">Date</th>'
+        '<th class="hl" style="text-align:left;">Firm</th>'
+        '<th style="text-align:left;">Action</th>'
+        '<th style="text-align:left;">From</th>'
+        '<th style="text-align:left;">To</th>'
+    )
+    if pt_col:
+        html += '<th>Price Target</th>'
+    html += '</tr></thead><tbody>'
+
+    for _, row in df.iterrows():
+        date_str = row[date_col].strftime("%b %d, %Y") if date_col and pd.notna(row.get(date_col)) else "—"
+        firm_str = str(row[firm_col]).strip() if firm_col and pd.notna(row.get(firm_col)) else "—"
+        action_str = _action_badge(row.get(action_col, "")) if action_col else "—"
+        from_str = str(row[from_col]).strip() if from_col and pd.notna(row.get(from_col)) and str(row.get(from_col)).lower() not in ("nan","none","") else "—"
+        to_val   = row.get(to_col, "") if to_col else ""
+        to_str   = str(to_val).strip() if pd.notna(to_val) and str(to_val).lower() not in ("nan","none","") else "—"
+        to_color = _rating_color(to_val)
+
+        pt_cell = ""
+        if pt_col:
+            pt_val = _safe(row.get(pt_col, np.nan))
+            pt_cell = f'<td style="text-align:right;">{_fmt_price(pt_val)}</td>'
+
+        html += (
+            f'<tr>'
+            f'<td class="hl" style="color:rgba(255,255,255,.45);font-size:11px;">{date_str}</td>'
+            f'<td class="hl" style="color:rgba(255,255,255,.85);">{firm_str}</td>'
+            f'<td style="text-align:left;">{action_str}</td>'
+            f'<td style="text-align:left;color:rgba(255,255,255,.45);font-size:11px;">{from_str}</td>'
+            f'<td style="text-align:left;font-weight:600;color:{to_color};">{to_str}</td>'
+            f'{pt_cell}'
+            f'</tr>'
+        )
+
+    html += "</tbody></table></div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+
 
 def render_dcf(
     ticker: str,
@@ -660,7 +966,7 @@ def render_dcf(
     )
     st.markdown(
         f'<p style="font-size:13px;color:rgba(255,255,255,.4);margin-top:0;margin-bottom:20px;">'
-        f'Valuation Model</p>',
+        f'</p>',
         unsafe_allow_html=True,
     )
 
@@ -846,23 +1152,30 @@ def render_dcf(
 
     ke, kd, wacc = result.cost_of_equity, result.cost_of_debt_aftertax, result.wacc
 
-    # ── Build Street Consensus assumptions (same WACC, Street growth/margin) ──
-    street_g1 = _clamp(cons_g1, -0.20, 0.80, rev_g_y1)
-    street_g5 = _clamp(cons_g5, -0.10, 0.50, max(rev_g_y1 * 0.5, terminal_g + 0.01))
-    street_em = _clamp(cons_em, 0.01, 0.85, ebitda_m)
+    # ── Build Street Consensus assumptions ────────────────────────────────────
+    # Street model uses ONLY consensus growth/margin + the DEFAULT (SEC-derived)
+    # WACC inputs. It is intentionally isolated from the user's slider tweaks so
+    # that adjusting "Your Model" assumptions never changes the Street numbers.
+    street_g1 = _clamp(cons_g1, -0.20, 0.80, default_asm.revenue_growth_y1)
+    street_g5 = _clamp(cons_g5, -0.10, 0.50, max(default_asm.revenue_growth_y1 * 0.5, default_asm.terminal_growth_rate + 0.01))
+    street_em = _clamp(cons_em, 0.01, 0.85, default_asm.ebitda_margin)
 
     street_asm = DCFAssumptions(
         n_years=10, stage1_years=5,
         revenue_growth_y1=street_g1,
         revenue_growth_y5=street_g5,
         ebitda_margin=street_em,
-        capex_pct_revenue=capex_pct,   # keep your WACC/capex/D&A assumptions
-        da_pct_revenue=da_pct,
-        nwc_pct_revenue=nwc_pct,
-        terminal_growth_rate=terminal_g,
-        beta=beta_val, risk_free_rate=rf_rate,
-        equity_risk_premium=erp, cost_of_debt_pretax=cod,
-        tax_rate=tax_rate, debt_weight=debt_w, equity_weight=1.0 - debt_w,
+        capex_pct_revenue=default_asm.capex_pct_revenue,
+        da_pct_revenue=default_asm.da_pct_revenue,
+        nwc_pct_revenue=default_asm.nwc_pct_revenue,
+        terminal_growth_rate=default_asm.terminal_growth_rate,
+        beta=default_asm.beta,
+        risk_free_rate=default_asm.risk_free_rate,
+        equity_risk_premium=default_asm.equity_risk_premium,
+        cost_of_debt_pretax=default_asm.cost_of_debt_pretax,
+        tax_rate=default_asm.tax_rate,
+        debt_weight=default_asm.debt_weight,
+        equity_weight=default_asm.equity_weight,
         base_ufcf=default_asm.base_ufcf,
         base_revenue=default_asm.base_revenue,
         net_debt=default_asm.net_debt,
@@ -892,7 +1205,6 @@ def render_dcf(
     with tab_your:
         st.markdown(_render_projection_table(result, assumptions), unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
-        _render_tv_cards(result, assumptions, wacc, terminal_g)
         st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
         st.markdown(
             '<p class="cfg-label" style="margin-bottom:12px;">Street Equity Value Bridge</p>',
@@ -908,37 +1220,48 @@ def render_dcf(
 
     # ── Tab: Wall St. Consensus ───────────────────────────────────────────────
     with tab_street:
-        # Price target cards
-        col_r, col_lo, col_mn, col_hi = st.columns(4)
-        with col_r:
-            rat_html = _rating_badge(rat) if rat else "<span style='color:rgba(255,255,255,.3)'>—</span>"
+        rec_trend        = estimates.get("rec_trend",        pd.DataFrame())
+        upgrades_df      = estimates.get("upgrades_downgrades", pd.DataFrame())
+
+        # ── Row 1: Analyst Recommendations bar + Price Targets range ──────────
+        ac1, ac2 = st.columns(2, gap="large")
+
+        with ac1:
             st.markdown(
-                f'<div class="val-card"><div class="label">Analyst Rating</div>'
-                f'<div class="value" style="font-size:17px;padding-top:4px;">{rat_html}</div>'
-                f'<div class="sub">{n_an} analysts</div></div>',
+                '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
+                'color:rgba(255,255,255,.35);margin-bottom:4px;">Analyst Recommendations</p>',
                 unsafe_allow_html=True,
             )
-        for col, key, lbl, css in [
-            (col_lo, "low",  "Price Target (Low)",  ""),
-            (col_mn, "mean", "Price Target (Mean)", "up" if not np.isnan(mean_target) and not np.isnan(current_price) and mean_target > current_price else "down"),
-            (col_hi, "high", "Price Target (High)", "up"),
-        ]:
-            with col:
-                pv = pt.get(key, np.nan)
-                up = (pv - current_price) / current_price * 100 if (
-                    not np.isnan(pv) and not np.isnan(current_price) and current_price > 0
-                ) else np.nan
-                st.markdown(
-                    _card(lbl, _fmt_price(pv),
-                          f"{_fmt_pct(up, show_plus=True)} vs current" if not np.isnan(up) else "",
-                          css),
-                    unsafe_allow_html=True,
-                )
+            fig_rec = _chart_analyst_recommendations(rec_trend)
+            if fig_rec:
+                st.plotly_chart(fig_rec, use_container_width=True, config={"displayModeBar": False})
+            else:
+                st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No recommendation trend data available.</p>', unsafe_allow_html=True)
+
+        with ac2:
+            st.markdown(
+                '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
+                'color:rgba(255,255,255,.35);margin-bottom:4px;">Analyst Price Targets</p>',
+                unsafe_allow_html=True,
+            )
+            fig_pt = _chart_analyst_price_targets(pt, current_price)
+            if fig_pt:
+                st.plotly_chart(fig_pt, use_container_width=True, config={"displayModeBar": False})
+            else:
+                st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No price target data available.</p>', unsafe_allow_html=True)
+
+        # ── Latest Ratings table ──────────────────────────────────────────────
+        st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
+        st.markdown(
+            '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
+            'color:rgba(255,255,255,.35);margin-bottom:4px;">Latest Ratings</p>',
+            unsafe_allow_html=True,
+        )
+        _render_latest_ratings(upgrades_df)
 
         st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
         st.markdown(_render_projection_table(street_result, street_asm), unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
-        _render_tv_cards(street_result, street_asm, street_result.wacc, terminal_g)
         st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
         st.markdown(
             '<p class="cfg-label" style="margin-bottom:12px;">Street Equity Value Bridge</p>',
