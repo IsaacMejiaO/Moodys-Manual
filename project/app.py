@@ -830,7 +830,7 @@ if st.sidebar.button("Ratios", width="stretch", type="primary" if current_page =
     else:
         st.sidebar.warning("Click a ticker row in the Screener first.")
 
-if st.sidebar.button("DCF", width="stretch", type="primary" if current_page == "dcf" else "secondary"):
+if st.sidebar.button("Valuation", width="stretch", type="primary" if current_page == "dcf" else "secondary"):
     if selected_ticker:
         st.session_state["page"] = "dcf"
         st.rerun()
@@ -1331,3 +1331,4 @@ elif st.session_state["page"] == "performance":
 # FOOTER
 # =========================================================
 st.sidebar.markdown("---")
+
