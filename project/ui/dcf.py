@@ -736,32 +736,166 @@ def _chart_revenue_earnings(ticker: str) -> Optional[go.Figure]:
 
 
 
+def _chart_eps_history(ticker: str) -> Optional[go.Figure]:
+    """
+    EPS (Earnings Per Share) bar chart — Yahoo Finance style.
+    Shows quarterly EPS actual vs estimate for recent quarters,
+    plus annual EPS for the last 4 fiscal years.
+    """
+    try:
+        t = yf.Ticker(ticker)
+
+        # Try quarterly earnings first (actual vs estimate)
+        qe = None
+        try:
+            qe = t.quarterly_earnings
+        except Exception:
+            pass
+
+        if qe is not None and not qe.empty:
+            qe = qe.copy()
+            # index is quarter labels (e.g. "3Q2024"), columns: Earnings, Estimate
+            qe = qe.sort_index().tail(8)  # last 8 quarters
+            x_labels = [str(i) for i in qe.index]
+
+            fig = go.Figure()
+
+            if "Estimate" in qe.columns:
+                est_vals = [_safe(v) / 1 for v in qe["Estimate"].tolist()]
+                fig.add_trace(go.Bar(
+                    name="Estimate",
+                    x=x_labels,
+                    y=est_vals,
+                    marker_color="rgba(255,255,255,0.15)",
+                    marker_line=dict(color="rgba(255,255,255,0.30)", width=1),
+                    text=[f"${v:.2f}" if not np.isnan(v) else "" for v in est_vals],
+                    textposition="outside",
+                    textfont=dict(size=9, color="rgba(255,255,255,0.45)"),
+                    showlegend=True,
+                ))
+
+            if "Earnings" in qe.columns:
+                act_vals = [_safe(v) / 1 for v in qe["Earnings"].tolist()]
+                fig.add_trace(go.Bar(
+                    name="Actual",
+                    x=x_labels,
+                    y=act_vals,
+                    marker_color="rgba(10,124,255,0.70)",
+                    marker_line=dict(color="rgba(10,124,255,0.90)", width=1),
+                    text=[f"${v:.2f}" if not np.isnan(v) else "" for v in act_vals],
+                    textposition="outside",
+                    textfont=dict(size=9, color="rgba(255,255,255,0.65)"),
+                    showlegend=True,
+                ))
+
+            fig.update_layout(
+                barmode="group",
+                template="plotly_dark",
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
+                margin=dict(l=0, r=0, t=24, b=0), height=280,
+                legend=dict(orientation="h", x=0, y=1.08, font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+                xaxis=dict(showgrid=False, tickfont=dict(size=10), type="category"),
+                yaxis=dict(title="EPS ($)", gridcolor="rgba(255,255,255,0.05)", tickformat="$.2f"),
+                bargap=0.25, bargroupgap=0.08, hovermode="x unified",
+            )
+            return fig
+
+        # Fallback: annual EPS from financials
+        fin = t.financials
+        if fin is None or fin.empty:
+            return None
+
+        cols = [c for c in fin.columns if hasattr(c, "year")]
+        cols = sorted(cols)[-4:]
+
+        def _get_row(keys):
+            for k in keys:
+                if k in fin.index:
+                    return fin.loc[k]
+            return None
+
+        eps_row = _get_row(["Diluted EPS", "Basic EPS", "EPS"])
+        ni_row  = _get_row(["Net Income", "Net Income Common Stockholders"])
+        shares_row = _get_row(["Diluted Average Shares", "Basic Average Shares"])
+
+        # Compute EPS if not direct
+        if eps_row is None and ni_row is not None and shares_row is not None:
+            eps_vals = []
+            for c in cols:
+                ni = _safe(ni_row.get(c, np.nan))
+                sh = _safe(shares_row.get(c, np.nan))
+                eps_vals.append(ni / sh if not np.isnan(ni) and not np.isnan(sh) and sh != 0 else np.nan)
+        elif eps_row is not None:
+            eps_vals = [_safe(eps_row.get(c, np.nan)) for c in cols]
+        else:
+            return None
+
+        years = [str(c.year) for c in cols]
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            name="EPS",
+            x=years,
+            y=eps_vals,
+            marker_color="rgba(10,124,255,0.70)",
+            marker_line=dict(color="rgba(10,124,255,0.90)", width=1),
+            text=[f"${v:.2f}" if not np.isnan(v) else "" for v in eps_vals],
+            textposition="outside",
+            textfont=dict(size=9.5, color="rgba(255,255,255,0.65)"),
+        ))
+
+        fig.update_layout(
+            template="plotly_dark",
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
+            margin=dict(l=0, r=0, t=24, b=0), height=280,
+            legend=dict(orientation="h", x=0, y=1.08, font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+            xaxis=dict(showgrid=False, tickfont=dict(size=11), type="category"),
+            yaxis=dict(title="EPS ($)", gridcolor="rgba(255,255,255,0.05)", tickformat="$.2f"),
+            bargap=0.35, hovermode="x unified",
+        )
+        return fig
+    except Exception:
+        return None
+
+
 def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figure]:
     """
     Stacked bar chart of analyst recommendation counts by period.
-    Expects a DataFrame whose columns are already normalised to
-    Title Case ("Strong Buy", "Buy", "Hold", "Sell", "Strong Sell")
-    by _get_analyst_estimates.  Index may be period strings ("0m".."3m"),
-    dates, or integers.
+    - No legend
+    - Count inside each bar segment
+    - Total analysts on top of each bar
+    - Month names on x-axis (e.g. Dec, Jan, Feb)
+    - Y-axis hidden
     """
     if rec_trend is None or rec_trend.empty:
         return None
 
     df = rec_trend.copy()
 
-    # Keep only the rating columns that exist
     rating_cols = [c for c in ["Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"] if c in df.columns]
     if not rating_cols:
         return None
     df = df[rating_cols]
 
-    # Convert period index ("0m","1m","2m","3m") → "Current","1 Mo Ago", etc.
-    _period_label = {"0m": "Current", "1m": "1 Mo Ago", "2m": "2 Mo Ago", "3m": "3 Mo Ago"}
+    # Convert period index ("0m","1m","2m","3m") -> actual month names (Dec, Jan, Feb...)
+    import datetime as _dt
+    _now = _dt.date.today()
+
+    def _period_to_month(p: str) -> str:
+        try:
+            n = int(str(p).replace("m", ""))
+            month = (_now.month - n - 1) % 12 + 1
+            return _dt.date(2000, month, 1).strftime("%b")
+        except Exception:
+            return str(p)
+
     idx = df.index.tolist()
-    if all(str(i) in _period_label for i in idx):
-        labels = [_period_label[str(i)] for i in idx]
+    if all(str(i).endswith("m") and str(i)[:-1].isdigit() for i in idx):
+        labels = [_period_to_month(str(i)) for i in idx]
     elif hasattr(df.index, "strftime"):
-        labels = df.index.strftime("%b '%y").tolist()
+        labels = df.index.strftime("%b").tolist()
     else:
         labels = [str(i) for i in idx]
 
@@ -773,24 +907,46 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
         "Strong Sell": "#FF3B30",
     }
 
+    # Totals per bar period for annotation above each stack
+    totals = df[rating_cols].sum(axis=1).tolist()
+
     fig = go.Figure()
     for col in rating_cols:
+        vals = df[col].tolist()
         fig.add_trace(go.Bar(
-            name=col, x=labels, y=df[col].tolist(),
+            name=col,
+            x=labels,
+            y=vals,
             marker_color=colors.get(col, "#888"),
             marker_line_width=0,
+            showlegend=False,
+            text=[str(int(v)) if v and int(v) > 0 else "" for v in vals],
+            textposition="inside",
+            textfont=dict(size=10, color="rgba(255,255,255,0.85)"),
+            insidetextanchor="middle",
         ))
+
+    # Invisible scatter to show total on top of each stacked bar
+    fig.add_trace(go.Scatter(
+        x=labels,
+        y=totals,
+        mode="text",
+        text=[f"<b>{int(t)}</b>" for t in totals],
+        textposition="top center",
+        textfont=dict(size=11, color="rgba(255,255,255,0.80)"),
+        showlegend=False,
+        hoverinfo="skip",
+    ))
 
     fig.update_layout(
         barmode="stack",
         template="plotly_dark",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-        margin=dict(l=0, r=0, t=8, b=0), height=260,
-        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.18,
-                    font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
-        xaxis=dict(showgrid=False, tickfont=dict(size=10)),
-        yaxis=dict(title="# Analysts", gridcolor="rgba(255,255,255,0.05)", tickformat=".0f"),
+        margin=dict(l=0, r=0, t=28, b=0), height=270,
+        showlegend=False,
+        xaxis=dict(showgrid=False, tickfont=dict(size=11)),
+        yaxis=dict(title="", visible=False, gridcolor="rgba(255,255,255,0.05)", tickformat=".0f"),
         bargap=0.25, hovermode="x unified",
     )
     return fig
@@ -798,9 +954,10 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
 
 def _chart_analyst_price_targets(pt: dict, current_price: float) -> Optional[go.Figure]:
     """
-    Horizontal range chart showing low / current / mean / high price targets
-    vs the current stock price — styled like a Yahoo Finance price target bar.
-    Returns None if targets are unavailable.
+    Horizontal range chart showing low / current / mean / high price targets.
+    - No legend
+    - Labels show label on top, price below (two-line annotation)
+    - No x-axis tick values shown
     """
     low  = _safe(pt.get("low",  np.nan))
     mean = _safe(pt.get("mean", np.nan))
@@ -815,7 +972,7 @@ def _chart_analyst_price_targets(pt: dict, current_price: float) -> Optional[go.
 
     fig = go.Figure()
 
-    # Range bar (low → high)
+    # Range bar (low -> high)
     if not np.isnan(low) and not np.isnan(high):
         fig.add_trace(go.Scatter(
             x=[low, high], y=[0.5, 0.5],
@@ -824,63 +981,69 @@ def _chart_analyst_price_targets(pt: dict, current_price: float) -> Optional[go.
             showlegend=False, hoverinfo="skip",
         ))
 
-    # Mean target marker
+    # Helper: two-line label "LABEL / $XXX.XX"
+    def _two_line(label: str, price: float) -> str:
+        return f"<b>{label}</b><br>{_fmt_price(price)}"
+
+    # Mean target marker — label above
     if not np.isnan(mean):
         fig.add_trace(go.Scatter(
             x=[mean], y=[0.5],
             mode="markers+text",
             marker=dict(size=16, color=UP, symbol="diamond"),
-            text=[f"<b>{_fmt_price(mean)}</b>"],
+            text=[_two_line("Mean Target", mean)],
             textposition="top center",
-            textfont=dict(size=11, color=UP),
-            name="Mean Target",
+            textfont=dict(size=10, color=UP),
+            showlegend=False,
         ))
 
-    # Low target
+    # Low target — label below
     if not np.isnan(low):
         fig.add_trace(go.Scatter(
             x=[low], y=[0.5],
             mode="markers+text",
             marker=dict(size=10, color="rgba(255,255,255,0.55)", symbol="circle"),
-            text=[_fmt_price(low)],
+            text=[_two_line("Low Target", low)],
             textposition="bottom center",
             textfont=dict(size=10, color="rgba(255,255,255,0.55)"),
-            name="Low Target",
+            showlegend=False,
         ))
 
-    # High target
+    # High target — label below
     if not np.isnan(high):
         fig.add_trace(go.Scatter(
             x=[high], y=[0.5],
             mode="markers+text",
             marker=dict(size=10, color="rgba(255,255,255,0.55)", symbol="circle"),
-            text=[_fmt_price(high)],
+            text=[_two_line("High Target", high)],
             textposition="bottom center",
             textfont=dict(size=10, color="rgba(255,255,255,0.55)"),
-            name="High Target",
+            showlegend=False,
         ))
 
-    # Current price vertical line
+    # Current price vertical line with two-line annotation
     if not np.isnan(current_price):
         fig.add_vline(
             x=current_price,
             line_width=2, line_dash="dash",
             line_color="rgba(255,255,255,0.40)",
-            annotation_text=f"Current {_fmt_price(current_price)}",
+            annotation_text=f"<b>Current</b><br>{_fmt_price(current_price)}",
             annotation_position="top",
-            annotation_font=dict(size=10, color="rgba(255,255,255,0.55)"),
+            annotation_font=dict(size=10, color="rgba(255,255,255,0.65)"),
         )
 
     fig.update_layout(
         template="plotly_dark",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-        margin=dict(l=0, r=0, t=36, b=20), height=180,
-        showlegend=True,
-        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.15,
-                    font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
-        xaxis=dict(range=[x_min, x_max], showgrid=False,
-                   tickformat="$,.0f", tickfont=dict(size=10)),
+        margin=dict(l=0, r=0, t=48, b=36), height=200,
+        showlegend=False,
+        xaxis=dict(
+            range=[x_min, x_max],
+            showgrid=False,
+            showticklabels=False,  # hide x-axis tick values
+            zeroline=False,
+        ),
         yaxis=dict(visible=False, range=[0, 1]),
         hovermode="x unified",
     )
@@ -1096,23 +1259,44 @@ def render_dcf(
 
     # ─────────────────────────────────────────────────────────────────────────
     # ANALYST SECTION  — above Model Assumptions, outside tabs
+    # ROW 1: EPS History  |  Revenue vs Earnings
+    # ROW 2: Analyst Price Targets  |  Analyst Recommendations  |  Latest Ranking
     # ─────────────────────────────────────────────────────────────────────────
-    _an_col1, _an_col2, _an_col3 = st.columns([2, 2, 1], gap="large")
 
-    with _an_col1:
+    # ── Row 1: EPS + Revenue vs Earnings charts ───────────────────────────────
+    _top_col1, _top_col2 = st.columns([1, 1], gap="large")
+
+    with _top_col1:
         st.markdown(
             '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
-            'color:rgba(255,255,255,.35);margin-bottom:4px;">Analyst Recommendations</p>',
+            'color:rgba(255,255,255,.35);margin-bottom:4px;">Earnings Per Share</p>',
             unsafe_allow_html=True,
         )
-        _rec_trend = estimates.get("rec_trend", pd.DataFrame())
-        _fig_rec   = _chart_analyst_recommendations(_rec_trend)
-        if _fig_rec:
-            st.plotly_chart(_fig_rec, use_container_width=True, config={"displayModeBar": False})
+        _fig_eps = _chart_eps_history(ticker)
+        if _fig_eps:
+            st.plotly_chart(_fig_eps, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No EPS data available.</p>', unsafe_allow_html=True)
+
+    with _top_col2:
+        st.markdown(
+            '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
+            'color:rgba(255,255,255,.35);margin-bottom:4px;">Revenue vs. Earnings</p>',
+            unsafe_allow_html=True,
+        )
+        _fig_rev_earn = _chart_revenue_earnings(ticker)
+        if _fig_rev_earn:
+            st.plotly_chart(_fig_rev_earn, use_container_width=True, config={"displayModeBar": False})
         else:
             st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No data available.</p>', unsafe_allow_html=True)
 
-    with _an_col2:
+    st.markdown('<div style="margin-bottom:12px;"></div>', unsafe_allow_html=True)
+
+    # ── Row 2: Price Targets | Recommendations | Latest Ranking ──────────────
+    # Order: Left=Price Targets, Middle=Recommendations, Right=Latest Ranking
+    _an_col1, _an_col2, _an_col3 = st.columns([2, 2, 1], gap="large")
+
+    with _an_col1:
         st.markdown(
             '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
             'color:rgba(255,255,255,.35);margin-bottom:4px;">Analyst Price Targets</p>',
@@ -1125,7 +1309,25 @@ def render_dcf(
         else:
             st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No data available.</p>', unsafe_allow_html=True)
 
+    with _an_col2:
+        st.markdown(
+            '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
+            'color:rgba(255,255,255,.35);margin-bottom:4px;">Analyst Recommendations</p>',
+            unsafe_allow_html=True,
+        )
+        _rec_trend = estimates.get("rec_trend", pd.DataFrame())
+        _fig_rec   = _chart_analyst_recommendations(_rec_trend)
+        if _fig_rec:
+            st.plotly_chart(_fig_rec, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No data available.</p>', unsafe_allow_html=True)
+
     with _an_col3:
+        st.markdown(
+            '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
+            'color:rgba(255,255,255,.35);margin-bottom:4px;">Latest Ranking</p>',
+            unsafe_allow_html=True,
+        )
         _upgrades_early = estimates.get("upgrades_downgrades", pd.DataFrame())
         _render_latest_ratings(_upgrades_early)
 
