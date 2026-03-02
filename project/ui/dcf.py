@@ -742,7 +742,7 @@ def _chart_revenue_earnings(ticker: str) -> Optional[go.Figure]:
             template="plotly_dark",
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-            margin=dict(l=0, r=0, t=8, b=0), height=580,
+            margin=dict(l=0, r=0, t=8, b=0), height=380,
             showlegend=False,
             xaxis=dict(showgrid=False, tickfont=dict(size=11), type="category"),
             yaxis=dict(title="", gridcolor="rgba(255,255,255,0.05)", tickformat="$.1f"),
@@ -931,24 +931,30 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
     import datetime as _dt
     _now = _dt.date.today()
 
-    def _period_to_month(p: str) -> str:
+    def _parse_period_months(p):
+        """Return months_ago for '0m', '-1m', '1m', '-3m', '3m' etc."""
         try:
-            months_ago = int(str(p).replace("m", ""))
-            month = _now.month - months_ago
-            year  = _now.year
-            while month <= 0:
-                month += 12
-                year  -= 1
-            return _dt.date(year, month, 1).strftime("%b")
+            return abs(int(str(p).strip().lower().replace("m", "")))
         except Exception:
-            return str(p)
+            return None
+
+    def _period_to_month(months_ago):
+        month = _now.month - months_ago
+        year  = _now.year
+        while month <= 0:
+            month += 12
+            year  -= 1
+        return _dt.date(year, month, 1).strftime("%b")
 
     idx = df.index.tolist()
-    if all(str(i).endswith("m") and str(i)[:-1].isdigit() for i in idx):
-        # Sort oldest (largest n) to newest (0m) for left-to-right chronology
-        sorted_idx = sorted(idx, key=lambda x: int(str(x).replace("m", "")), reverse=True)
-        df = df.loc[sorted_idx]
-        labels = [_period_to_month(str(i)) for i in sorted_idx]
+    parsed = [_parse_period_months(str(i)) for i in idx]
+
+    if all(v is not None for v in parsed):
+        # Sort oldest (largest months_ago) -> newest (0) left-to-right
+        paired = sorted(zip(parsed, idx), key=lambda x: x[0], reverse=True)
+        sorted_months, sorted_idx = zip(*paired)
+        df = df.loc[list(sorted_idx)]
+        labels = [_period_to_month(m) for m in sorted_months]
     elif hasattr(df.index, "strftime"):
         labels = df.index.strftime("%b").tolist()
     else:
@@ -998,7 +1004,7 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
         template="plotly_dark",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-        margin=dict(l=0, r=0, t=48, b=0), height=580,
+        margin=dict(l=0, r=0, t=32, b=0), height=380,
         showlegend=False,
         xaxis=dict(showgrid=False, tickfont=dict(size=13)),
         yaxis=dict(title="", visible=False, gridcolor="rgba(255,255,255,0.05)", tickformat=".0f"),
@@ -1092,7 +1098,7 @@ def _chart_analyst_price_targets(pt: dict, current_price: float) -> Optional[go.
         template="plotly_dark",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-        margin=dict(l=0, r=0, t=48, b=36), height=420,
+        margin=dict(l=0, r=0, t=32, b=20), height=260,
         showlegend=False,
         xaxis=dict(
             range=[x_min, x_max],
@@ -1157,13 +1163,39 @@ def _render_latest_ratings(upgrades_downgrades: pd.DataFrame) -> None:
         s = str(v).strip()
         return s if s.lower() not in ("nan", "none", "") else "—"
 
-    date_str     = row[date_col].strftime("%b %d, %Y") if date_col and pd.notna(row.get(date_col)) else "—"
-    firm_str     = _str(firm_col)
-    action_str   = _str(action_col)
-    from_str     = _str(from_col)
-    to_str       = _str(to_col)
-    pt_str       = _fmt_price(_safe(row.get(pt_col, np.nan))) if pt_col else "—"
-    price_action = action_str  # same field; yfinance does not expose a separate price-action
+    date_str  = row[date_col].strftime("%b %d, %Y") if date_col and pd.notna(row.get(date_col)) else "—"
+    firm_str  = _str(firm_col)
+    from_str  = _str(from_col)
+    to_str    = _str(to_col)
+    pt_str    = _fmt_price(_safe(row.get(pt_col, np.nan))) if pt_col else "—"
+
+    # Decode yfinance terse action codes → human-readable
+    _action_decode = {
+        "main":     "Maintained",
+        "maintain": "Maintained",
+        "up":       "Upgraded",
+        "upgrade":  "Upgraded",
+        "down":     "Downgraded",
+        "downgrade":"Downgraded",
+        "init":     "Initiated",
+        "initiate": "Initiated",
+        "reit":     "Reiterated",
+        "reiter":   "Reiterated",
+        "reiterate":"Reiterated",
+        "cover":    "Coverage Initiated",
+        "resume":   "Resumed",
+        "drop":     "Dropped Coverage",
+    }
+    raw_action = _str(action_col)
+    action_str = _action_decode.get(raw_action.lower(), raw_action.capitalize() if raw_action != "—" else "—")
+
+    # Price Action = from → to grade movement (more informative than repeating Action)
+    if from_str != "—" and to_str != "—":
+        price_action = f"{from_str} → {to_str}"
+    elif to_str != "—":
+        price_action = to_str
+    else:
+        price_action = "—"
 
     def _rating_col(val):
         v = str(val).lower()
@@ -1177,21 +1209,21 @@ def _render_latest_ratings(upgrades_downgrades: pd.DataFrame) -> None:
 
     def _action_col_color(val):
         v = str(val).lower()
-        if "upgrade" in v or "init" in v:
+        if "upgrad" in v or "init" in v or "cover" in v or "resum" in v:
             return UP
-        if "downgrade" in v:
+        if "downgrad" in v or "drop" in v:
             return DOWN
-        if "reiterat" in v or "maintain" in v:
+        if "maintain" in v or "reiter" in v:
             return ORANGE
         return "rgba(255,255,255,0.6)"
 
     rows = [
-        ("Date",         date_str,   "#fff"),
-        ("Analyst",      firm_str,   "#fff"),
-        ("Action",       action_str, _action_col_color(action_str)),
-        ("Rating",       to_str,     _rating_col(to_str)),
-        ("Price Action", price_action, _action_col_color(price_action)),
-        ("Price Target", pt_str,     "#fff"),
+        ("Date",         date_str,    "#fff"),
+        ("Analyst",      firm_str,    "#fff"),
+        ("Action",       action_str,  _action_col_color(action_str)),
+        ("Rating",       to_str,      _rating_col(to_str)),
+        ("Grade Change", price_action, _rating_col(to_str)),
+        ("Price Target", pt_str,      "#fff"),
     ]
 
     html = '<div style="margin-top:4px;">'
