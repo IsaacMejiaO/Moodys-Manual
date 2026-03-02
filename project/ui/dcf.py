@@ -377,9 +377,23 @@ def _rating_badge(rating: Optional[str]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _render_projection_table(result, assumptions: DCFAssumptions,
-                              divisor: float = 1e9, unit: str = "$B") -> str:
+                              divisor: float = 1e9, unit: str = "$B",
+                              ticker: str = "") -> str:
     n     = assumptions.n_years
-    years = [f"Y{i}" for i in range(1, n + 1)]
+
+    # ── Fiscal year labels: FY{current_year+1} … FY{current_year+n} ──────────
+    import datetime as _dt
+    _base_year = _dt.date.today().year
+    years = [f"FY{_base_year + i}" for i in range(1, n + 1)]
+
+    # ── Auto-pick display unit from Financials page session state ─────────────
+    if ticker:
+        fin_unit_key = f"fin_u_{ticker}"
+        fin_unit_opt = st.session_state.get(fin_unit_key, "Billions ($B)")
+        _div_map = {"Actual ($)": 1, "Thousands ($K)": 1e3, "Millions ($M)": 1e6, "Billions ($B)": 1e9}
+        _lbl_map = {"Actual ($)": "$", "Thousands ($K)": "$K", "Millions ($M)": "$M", "Billions ($B)": "$B"}
+        divisor = _div_map.get(fin_unit_opt, 1e9)
+        unit    = _lbl_map.get(fin_unit_opt, "$B")
 
     # Precompute derived rows
     prev_rev = assumptions.base_revenue
@@ -443,7 +457,7 @@ def _render_projection_table(result, assumptions: DCFAssumptions,
                 cells += f"<td>{v:.4f}x</td>"
             else:
                 scaled = v / divisor
-                s   = f"{abs(scaled):,.0f}" if abs(scaled) >= 100 else f"{abs(scaled):,.2f}"
+                s   = f"{abs(scaled):,.0f}"
                 neg = ' style="color:#FF3B30"' if v < 0 else ""
                 txt = f"({s})" if v < 0 else s
                 cells += f"<td{neg}>{txt}</td>"
@@ -723,7 +737,7 @@ def _chart_revenue_earnings(ticker: str) -> Optional[go.Figure]:
             template="plotly_dark",
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-            margin=dict(l=0, r=0, t=8, b=0), height=280,
+            margin=dict(l=0, r=0, t=8, b=0), height=420,
             showlegend=False,
             xaxis=dict(showgrid=False, tickfont=dict(size=11), type="category"),
             yaxis=dict(title="", gridcolor="rgba(255,255,255,0.05)", tickformat="$.1f"),
@@ -1345,8 +1359,6 @@ def render_dcf(
         _upgrades_early = estimates.get("upgrades_downgrades", pd.DataFrame())
         _render_latest_ratings(_upgrades_early)
 
-    st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
-
     # ─────────────────────────────────────────────────────────────────────────
     # ASSUMPTION EXPANDER  — Configure-optimizer style
     # ─────────────────────────────────────────────────────────────────────────
@@ -1553,11 +1565,9 @@ def render_dcf(
 
     # ── Tab: Your Model ───────────────────────────────────────────────────────
     with tab_your:
-        st.markdown(_render_projection_table(result, assumptions), unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
+        st.markdown(_render_projection_table(result, assumptions, ticker=ticker), unsafe_allow_html=True)
         st.markdown(
-            '<p class="cfg-label" style="margin-bottom:12px;">Street Equity Value Bridge</p>',
+            '<p class="cfg-label" style="margin-bottom:12px;margin-top:20px;">Street Equity Value Bridge</p>',
             unsafe_allow_html=True,
         )
         _render_equity_value_bridge(
@@ -1570,11 +1580,9 @@ def render_dcf(
 
     # ── Tab: Wall St. Consensus ───────────────────────────────────────────────
     with tab_street:
-        st.markdown(_render_projection_table(street_result, street_asm), unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<hr class="val-divider">', unsafe_allow_html=True)
+        st.markdown(_render_projection_table(street_result, street_asm, ticker=ticker), unsafe_allow_html=True)
         st.markdown(
-            '<p class="cfg-label" style="margin-bottom:12px;">Street Equity Value Bridge</p>',
+            '<p class="cfg-label" style="margin-bottom:12px;margin-top:20px;">Street Equity Value Bridge</p>',
             unsafe_allow_html=True,
         )
         _render_equity_value_bridge(
