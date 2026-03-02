@@ -950,7 +950,7 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
             showlegend=False,
             text=[str(int(v)) if v and int(v) > 0 else "" for v in vals],
             textposition="inside",
-            textfont=dict(size=10, color="rgba(255,255,255,0.85)"),
+            textfont=dict(size=13, color="rgba(255,255,255,0.90)"),
             insidetextanchor="middle",
         ))
 
@@ -961,7 +961,7 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
         mode="text",
         text=[f"<b>{int(t)}</b>" for t in totals],
         textposition="top center",
-        textfont=dict(size=11, color="rgba(255,255,255,0.80)"),
+        textfont=dict(size=13, color="rgba(255,255,255,0.80)"),
         showlegend=False,
         hoverinfo="skip",
     ))
@@ -971,12 +971,12 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
         template="plotly_dark",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-        margin=dict(l=0, r=0, t=42, b=0), height=320,
+        margin=dict(l=0, r=0, t=48, b=0), height=420,
         showlegend=False,
-        xaxis=dict(showgrid=False, tickfont=dict(size=11)),
+        xaxis=dict(showgrid=False, tickfont=dict(size=13)),
         yaxis=dict(title="", visible=False, gridcolor="rgba(255,255,255,0.05)", tickformat=".0f"),
         bargap=0.30, hovermode="x unified",
-        uniformtext=dict(minsize=9, mode="hide"),
+        uniformtext=dict(minsize=11, mode="show"),
     )
     return fig
 
@@ -1288,26 +1288,15 @@ def render_dcf(
 
     # ─────────────────────────────────────────────────────────────────────────
     # ANALYST SECTION  — above Model Assumptions, outside tabs
-    # ROW 1: EPS History  |  Revenue vs Earnings
-    # ROW 2: Analyst Price Targets  |  Analyst Recommendations  |  Latest Ranking
+    # Left: Revenue vs. Earnings
+    # Middle: Analyst Recommendations
+    # Right (top): Analyst Price Targets  |  Right (bottom): Latest Ranking
     # ─────────────────────────────────────────────────────────────────────────
 
-    # ── Row 1: EPS + Revenue vs Earnings charts ───────────────────────────────
-    _top_col1, _top_col2 = st.columns([1, 1], gap="large")
+    _an_col1, _an_col2, _an_col3 = st.columns([2, 2, 1], gap="large")
 
-    with _top_col1:
-        st.markdown(
-            '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
-            'color:rgba(255,255,255,.35);margin-bottom:4px;">Earnings Per Share</p>',
-            unsafe_allow_html=True,
-        )
-        _fig_eps = _chart_eps_history(ticker)
-        if _fig_eps:
-            st.plotly_chart(_fig_eps, use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No EPS data available.</p>', unsafe_allow_html=True)
-
-    with _top_col2:
+    # ── Left: Revenue vs. Earnings ────────────────────────────────────────────
+    with _an_col1:
         st.markdown(
             '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
             'color:rgba(255,255,255,.35);margin-bottom:4px;">Revenue vs. Earnings</p>',
@@ -1319,25 +1308,7 @@ def render_dcf(
         else:
             st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No data available.</p>', unsafe_allow_html=True)
 
-    st.markdown('<div style="margin-bottom:12px;"></div>', unsafe_allow_html=True)
-
-    # ── Row 2: Price Targets | Recommendations | Latest Ranking ──────────────
-    # Order: Left=Price Targets, Middle=Recommendations, Right=Latest Ranking
-    _an_col1, _an_col2, _an_col3 = st.columns([2, 2, 1], gap="large")
-
-    with _an_col1:
-        st.markdown(
-            '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
-            'color:rgba(255,255,255,.35);margin-bottom:4px;">Analyst Price Targets</p>',
-            unsafe_allow_html=True,
-        )
-        _pt_early  = estimates.get("price_targets", {})
-        _fig_pt    = _chart_analyst_price_targets(_pt_early, current_price)
-        if _fig_pt:
-            st.plotly_chart(_fig_pt, use_container_width=True, config={"displayModeBar": False})
-        else:
-            st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No data available.</p>', unsafe_allow_html=True)
-
+    # ── Middle: Analyst Recommendations ──────────────────────────────────────
     with _an_col2:
         st.markdown(
             '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
@@ -1351,7 +1322,21 @@ def render_dcf(
         else:
             st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No data available.</p>', unsafe_allow_html=True)
 
+    # ── Right: Price Targets (top) + Latest Ranking (bottom) ─────────────────
     with _an_col3:
+        st.markdown(
+            '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
+            'color:rgba(255,255,255,.35);margin-bottom:4px;">Analyst Price Targets</p>',
+            unsafe_allow_html=True,
+        )
+        _pt_early = estimates.get("price_targets", {})
+        _fig_pt   = _chart_analyst_price_targets(_pt_early, current_price)
+        if _fig_pt:
+            st.plotly_chart(_fig_pt, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.markdown('<p style="font-size:12px;color:rgba(255,255,255,.3);margin-top:12px;">No data available.</p>', unsafe_allow_html=True)
+
+        st.markdown('<div style="margin-top:16px;"></div>', unsafe_allow_html=True)
         st.markdown(
             '<p style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;'
             'color:rgba(255,255,255,.35);margin-bottom:4px;">Latest Ranking</p>',
