@@ -933,9 +933,13 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
 
     def _period_to_month(p: str) -> str:
         try:
-            n = int(str(p).replace("m", ""))
-            month = ((_now.month - 1 - n) % 12) + 1
-            return _dt.date(2000, month, 1).strftime("%b")
+            months_ago = int(str(p).replace("m", ""))
+            month = _now.month - months_ago
+            year  = _now.year
+            while month <= 0:
+                month += 12
+                year  -= 1
+            return _dt.date(year, month, 1).strftime("%b")
         except Exception:
             return str(p)
 
@@ -1088,7 +1092,7 @@ def _chart_analyst_price_targets(pt: dict, current_price: float) -> Optional[go.
         template="plotly_dark",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-        margin=dict(l=0, r=0, t=48, b=36), height=320,
+        margin=dict(l=0, r=0, t=48, b=36), height=420,
         showlegend=False,
         xaxis=dict(
             range=[x_min, x_max],
@@ -1574,33 +1578,47 @@ def render_dcf(
 
     # ── Tab: Your Model ───────────────────────────────────────────────────────
     with tab_your:
-        st.markdown(_render_projection_table(result, assumptions, ticker=ticker), unsafe_allow_html=True)
-        st.markdown(
-            '<p class="cfg-label" style="margin-bottom:12px;margin-top:20px;">Street Equity Value Bridge</p>',
-            unsafe_allow_html=True,
-        )
-        _render_equity_value_bridge(
-            result, assumptions,
-            rf_rate, beta_val, erp,
-            ke, kd, wacc,
-            cod, tax_rate, debt_w, current_price, beta_result,
-            terminal_g,
-        )
+        _ym_left, _ym_right = st.columns(2, gap="large")
+        with _ym_left:
+            st.markdown(
+                '<p class="cfg-label" style="margin-bottom:12px;">Your Model</p>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(_render_projection_table(result, assumptions, ticker=ticker), unsafe_allow_html=True)
+        with _ym_right:
+            st.markdown(
+                '<p class="cfg-label" style="margin-bottom:12px;">Street Equity Value Bridge</p>',
+                unsafe_allow_html=True,
+            )
+            _render_equity_value_bridge(
+                result, assumptions,
+                rf_rate, beta_val, erp,
+                ke, kd, wacc,
+                cod, tax_rate, debt_w, current_price, beta_result,
+                terminal_g,
+            )
 
     # ── Tab: Wall St. Consensus ───────────────────────────────────────────────
     with tab_street:
-        st.markdown(_render_projection_table(street_result, street_asm, ticker=ticker), unsafe_allow_html=True)
-        st.markdown(
-            '<p class="cfg-label" style="margin-bottom:12px;margin-top:20px;">Street Equity Value Bridge</p>',
-            unsafe_allow_html=True,
-        )
-        _render_equity_value_bridge(
-            street_result, street_asm,
-            rf_rate, beta_val, erp,
-            street_result.cost_of_equity, street_result.cost_of_debt_aftertax, street_result.wacc,
-            cod, tax_rate, debt_w, current_price, beta_result,
-            terminal_g,
-        )
+        _ws_left, _ws_right = st.columns(2, gap="large")
+        with _ws_left:
+            st.markdown(
+                '<p class="cfg-label" style="margin-bottom:12px;">Wall St. Consensus</p>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(_render_projection_table(street_result, street_asm, ticker=ticker), unsafe_allow_html=True)
+        with _ws_right:
+            st.markdown(
+                '<p class="cfg-label" style="margin-bottom:12px;">Street Equity Value Bridge</p>',
+                unsafe_allow_html=True,
+            )
+            _render_equity_value_bridge(
+                street_result, street_asm,
+                rf_rate, beta_val, erp,
+                street_result.cost_of_equity, street_result.cost_of_debt_aftertax, street_result.wacc,
+                cod, tax_rate, debt_w, current_price, beta_result,
+                terminal_g,
+            )
 
 
 
