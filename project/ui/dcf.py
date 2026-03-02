@@ -387,13 +387,18 @@ def _render_projection_table(result, assumptions: DCFAssumptions,
     years = [f"FY{_base_year + i}" for i in range(1, n + 1)]
 
     # ── Auto-pick display unit from Financials page session state ─────────────
-    if ticker:
-        fin_unit_key = f"fin_u_{ticker}"
-        fin_unit_opt = st.session_state.get(fin_unit_key, "Billions ($B)")
-        _div_map = {"Actual ($)": 1, "Thousands ($K)": 1e3, "Millions ($M)": 1e6, "Billions ($B)": 1e9}
-        _lbl_map = {"Actual ($)": "$", "Thousands ($K)": "$K", "Millions ($M)": "$M", "Billions ($B)": "$B"}
-        divisor = _div_map.get(fin_unit_opt, 1e9)
-        unit    = _lbl_map.get(fin_unit_opt, "$B")
+    # Reads the same session-state key written by the Financials page selectbox.
+    # Default is "Millions ($M)" (index=2) to match the Financials page default.
+    _div_map = {"Actual ($)": 1, "Thousands ($K)": 1e3, "Millions ($M)": 1e6, "Billions ($B)": 1e9}
+    _lbl_map = {"Actual ($)": "$", "Thousands ($K)": "$K", "Millions ($M)": "$M", "Billions ($B)": "$B"}
+    fin_unit_key = f"fin_u_{ticker}" if ticker else None
+    fin_unit_opt = (
+        st.session_state.get(fin_unit_key, "Millions ($M)")
+        if fin_unit_key
+        else "Millions ($M)"
+    )
+    divisor = _div_map.get(fin_unit_opt, 1e6)
+    unit    = _lbl_map.get(fin_unit_opt, "$M")
 
     # Precompute derived rows
     prev_rev = assumptions.base_revenue
@@ -737,7 +742,7 @@ def _chart_revenue_earnings(ticker: str) -> Optional[go.Figure]:
             template="plotly_dark",
             plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
             font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-            margin=dict(l=0, r=0, t=8, b=0), height=420,
+            margin=dict(l=0, r=0, t=8, b=0), height=580,
             showlegend=False,
             xaxis=dict(showgrid=False, tickfont=dict(size=11), type="category"),
             yaxis=dict(title="", gridcolor="rgba(255,255,255,0.05)", tickformat="$.1f"),
@@ -921,21 +926,25 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
         return None
     df = df[rating_cols]
 
-    # Convert period index ("0m","1m","2m","3m") -> actual month names (Dec, Jan, Feb...)
+    # Convert period index ("0m","1m","2m","3m") -> actual month names (Jan, Feb...)
+    # "0m" = current month, "1m" = 1 month ago. Sort oldest->newest for chronological x-axis.
     import datetime as _dt
     _now = _dt.date.today()
 
     def _period_to_month(p: str) -> str:
         try:
             n = int(str(p).replace("m", ""))
-            month = (_now.month - n - 1) % 12 + 1
+            month = ((_now.month - 1 - n) % 12) + 1
             return _dt.date(2000, month, 1).strftime("%b")
         except Exception:
             return str(p)
 
     idx = df.index.tolist()
     if all(str(i).endswith("m") and str(i)[:-1].isdigit() for i in idx):
-        labels = [_period_to_month(str(i)) for i in idx]
+        # Sort oldest (largest n) to newest (0m) for left-to-right chronology
+        sorted_idx = sorted(idx, key=lambda x: int(str(x).replace("m", "")), reverse=True)
+        df = df.loc[sorted_idx]
+        labels = [_period_to_month(str(i)) for i in sorted_idx]
     elif hasattr(df.index, "strftime"):
         labels = df.index.strftime("%b").tolist()
     else:
@@ -985,7 +994,7 @@ def _chart_analyst_recommendations(rec_trend: pd.DataFrame) -> Optional[go.Figur
         template="plotly_dark",
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Inter,-apple-system,sans-serif", size=11, color="rgba(255,255,255,0.75)"),
-        margin=dict(l=0, r=0, t=48, b=0), height=420,
+        margin=dict(l=0, r=0, t=48, b=0), height=580,
         showlegend=False,
         xaxis=dict(showgrid=False, tickfont=dict(size=13)),
         yaxis=dict(title="", visible=False, gridcolor="rgba(255,255,255,0.05)", tickformat=".0f"),
